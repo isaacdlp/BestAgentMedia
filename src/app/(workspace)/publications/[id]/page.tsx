@@ -18,7 +18,7 @@ export default async function PublicationDetailPage({
   params,
 }: PublicationDetailPageProps) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 
@@ -93,7 +93,7 @@ export default async function PublicationDetailPage({
     mapData = buildPublicationMapData(zipBoundaries);
   } catch (error) {
     console.error("Unable to load stored publication ZIP code boundaries:", error);
-    mapError = "The ZIP code map could not be loaded. Run npm run db:deploy to seed the Census boundaries.";
+    mapError = "The ZIP code map could not be loaded. Run npm run db:seed to seed the Census boundaries.";
   }
 
   return (
@@ -117,19 +117,27 @@ export default async function PublicationDetailPage({
           <div className="panel-heading">
             <h2>Publication information</h2>
           </div>
-          {coverImageUrl ? (
-            <Link href={`/publications/${publication.id}/cover`} style={{ display: "block" }}>
+          <div style={{ alignItems: "flex-start", display: "flex", flexWrap: "wrap", gap: "20px" }}>
+            {coverImageUrl ? (
+              <Link href={`/publications/${publication.id}/cover`} style={{ display: "block" }}>
+                <PublicationCoverImage
+                  alt={`${publication.name} publication cover`}
+                  imageUrl={coverImageUrl}
+                />
+              </Link>
+            ) : (
               <PublicationCoverImage
                 alt={`${publication.name} publication cover`}
                 imageUrl={coverImageUrl}
               />
+            )}
+            <Link
+              className="button button-secondary"
+              href={`/issues?publicationId=${publication.id}`}
+            >
+              Issues
             </Link>
-          ) : (
-            <PublicationCoverImage
-              alt={`${publication.name} publication cover`}
-              imageUrl={coverImageUrl}
-            />
-          )}
+          </div>
           {canEdit ? (
             <>
               <PublicationEditor
@@ -138,9 +146,11 @@ export default async function PublicationDetailPage({
                 id={publication.id}
                 name={publication.name}
                 slug={publication.slug}
+                description={publication.description}
                 submissionCount={publication._count.submissions}
                 zipCodes={publication.zipCodes.map(({ code }) => code)}
               />
+              <br/>
               <PublicationMetadata
                 createdAt={publication.createdAt}
                 id={publication.id}
@@ -151,6 +161,7 @@ export default async function PublicationDetailPage({
             <dl className="publication-fields">
               <PublicationValue label="Name" value={publication.name} />
               <PublicationValue label="Slug" value={publication.slug} />
+              <PublicationValue label="Description" value={publication.description} />
               <PublicationValue
                 label="ZIP codes"
                 value={publication.zipCodes.map(({ code }) => code).join(", ")}
@@ -173,9 +184,8 @@ export default async function PublicationDetailPage({
               />
             </dl>
           )}
-
-          &nbsp;
-
+  
+          <br/>
           <div className="panel-heading">
             <h2>Publishers</h2>
             <span className="count-badge">{publication.publisherAccess.length}</span>
@@ -221,6 +231,12 @@ export default async function PublicationDetailPage({
                 key={`${publication.id}-${publication.zipCodes.map(({ code }) => code).join(",")}`}
                 mapData={mapData}
               />
+              {mapData.unmappedCodes.length > 0 ? (
+                <p className="muted" role="status">
+                  Not shown on the map (no valid Census boundary, e.g. PO-box-only ZIP
+                  codes): {mapData.unmappedCodes.join(", ")}.
+                </p>
+              ) : null}
               <div aria-label="ZIP code population estimates" className="zip-population-list">
                 {zipPopulationData.map((zipCode) => (
                   <div className="zip-population-row" key={zipCode.code}>
@@ -247,10 +263,6 @@ export default async function PublicationDetailPage({
               No ZIP code boundaries are available for this publication.
             </div>
           )}
-        </section>
-
-        <section className="panel" style={{ gridColumn: "1 / -1" }}>
-          
         </section>
       </div>
     </>

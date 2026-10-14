@@ -32,7 +32,7 @@ export default async function BusinessImagePage({
   });
   if (!image) notFound();
 
-  const canEdit = user.role === UserRole.ADMIN || user.role === UserRole.PUBLISHER;
+  const canEdit = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
   const creativeAgent = canEdit
     ? await prisma.agent.findUnique({ where: { slug: "creative" }, select: { id: true, enabled: true } })
     : null;
@@ -52,10 +52,8 @@ export default async function BusinessImagePage({
         </div>
         {canEdit && creativeAgent?.enabled ? (
           <EnhanceImageButton
-            agentPath={`/agents/${creativeAgent.id}`}
             imageId={imageId}
             imageType="business"
-            originalImageSrc={imageSrc}
             parentId={id}
           />
         ) : null}

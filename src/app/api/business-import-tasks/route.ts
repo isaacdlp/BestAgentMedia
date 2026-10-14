@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { runBusinessImportTask } from "@/lib/business-import-tasks";
+import { getRegistryTask } from "@/lib/tasks";
 
 const createTaskSchema = z.object({
   source: z.enum([
@@ -15,7 +16,7 @@ const createTaskSchema = z.object({
     "foursquare-places",
   ]),
   zipCode: z.string().regex(/^\d{5}$/),
-  categories: z.array(z.string().trim().min(1).max(100)).min(1).max(100),
+  categories: z.array(z.string().trim().min(1).max(200)).min(1).max(2000),
   limit: z.number().int().positive().max(10_000),
 });
 
@@ -128,5 +129,8 @@ export async function POST(request: Request) {
     await runBusinessImportTask(task.id);
   });
 
-  return NextResponse.json({ id: task.id }, { status: 202 });
+  return NextResponse.json(
+    { id: task.id, task: await getRegistryTask({ businessImportTaskId: task.id }) },
+    { status: 202 },
+  );
 }

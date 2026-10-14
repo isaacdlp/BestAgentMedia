@@ -29,8 +29,8 @@ export async function POST(
 ) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Sign in to apply changes." }, { status: 401 });
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
-    return NextResponse.json({ error: "Administrators and publishers only." }, { status: 403 });
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
+    return NextResponse.json({ error: "Administrators and editors only." }, { status: 403 });
   }
 
   const { taskId } = await params;

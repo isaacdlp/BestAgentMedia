@@ -1,9 +1,16 @@
 import Link from "next/link";
 import { UserRole } from "@prisma/client";
+import { TaskNavLink } from "@/components/task-nav-link";
 
-export function WorkspaceSidebar({ role }: { role: UserRole | null }) {
+export function WorkspaceSidebar({
+  role,
+  activeTaskCount,
+}: {
+  role: UserRole | null;
+  activeTaskCount: number;
+}) {
   const isContributor = role === UserRole.CONTRIBUTOR || !role;
-  const isPublisherOrAdmin = role === UserRole.ADMIN || role === UserRole.PUBLISHER;
+  const isEditorOrAdmin = role === UserRole.ADMIN || role === UserRole.EDITOR;
   const isAdmin = role === UserRole.ADMIN;
 
   const brandHref = isContributor ? "/businesses" : "/dashboard";
@@ -17,15 +24,16 @@ export function WorkspaceSidebar({ role }: { role: UserRole | null }) {
       <p className="nav-label">WORKSPACE</p>
       <nav aria-label="Main navigation" className="main-nav">
         {!isContributor ? <Link href="/dashboard">Overview</Link> : null}
-        {isPublisherOrAdmin ? <Link href="/regions">Regions</Link> : null}
-        {isPublisherOrAdmin ? <Link href="/publications">Publications</Link> : null}
-        {isPublisherOrAdmin ? <Link href="/issues">Issues</Link> : null}
+        {isEditorOrAdmin ? <Link href="/regions">Regions</Link> : null}
+        {isEditorOrAdmin ? <Link href="/publications">Publications</Link> : null}
+        {isEditorOrAdmin ? <Link href="/issues">Issues</Link> : null}
         <Link href="/articles">Articles</Link>
+        <Link href="/submissions">Submissions</Link>
         <Link href="/ads">Advertisements</Link>
         <Link href="/businesses">Businesses</Link>
-        <Link href="/submissions">Submissions</Link>
         {isAdmin ? <Link href="/users">Users</Link> : null}
         {isAdmin ? <Link href="/agents">Agents</Link> : null}
+        <TaskNavLink initialActiveCount={activeTaskCount} />
       </nav>
       <div className="sidebar-note">
         <span className="status-dot" />

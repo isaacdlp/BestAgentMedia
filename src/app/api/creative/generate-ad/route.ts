@@ -3,13 +3,15 @@ import { UserRole } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { getAdvertisementScope } from "@/lib/access";
 import { prisma } from "@/lib/db";
-import { generateAd } from "@/lib/creative-agent";
+import { launchGenerateAd } from "@/lib/creative-agent";
+
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Sign in to generate ads." }, { status: 401 });
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
-    return NextResponse.json({ error: "Administrators and publishers only." }, { status: 403 });
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
+    return NextResponse.json({ error: "Administrators and editors only." }, { status: 403 });
   }
 
   let body: { adId?: unknown; imageIds?: unknown; customInstructions?: unknown };
@@ -57,7 +59,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const taskId = await generateAd({
+    const task = await launchGenerateAd({
       adId,
       adTitle: ad.title,
       adDescription: ad.description,
@@ -68,9 +70,9 @@ export async function POST(request: Request) {
       customInstructions: custom,
       triggeredById: user.id,
     });
-    return NextResponse.json({ taskId }, { status: 201 });
+    return NextResponse.json({ task }, { status: 202 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Generation failed.";
+    const message = error instanceof Error ? error.message : "Ad generation could not be started.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

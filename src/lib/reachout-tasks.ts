@@ -261,7 +261,7 @@ export async function runReachoutTask(taskId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-trigger: create a task for a business (swallows errors)
+// Auto-link: connect a new business to its owner if an account exists (swallows errors)
 // ---------------------------------------------------------------------------
 
 export async function triggerReachoutOnboarding(businessId: number): Promise<void> {
@@ -276,24 +276,23 @@ export async function triggerReachoutOnboarding(businessId: number): Promise<voi
     const onboarding = (settings.onboarding as Record<string, unknown> | undefined) ?? {};
     if (onboarding.enabled === false) return;
 
-    // Skip if a non-stopped, non-failed task already exists for this business
-    const existing = await prisma.reachoutTask.findFirst({
-      where: {
-        businessId,
-        status: { in: [ReachoutTaskStatus.PENDING, ReachoutTaskStatus.RUNNING] },
-      },
+    // Link only: connect to an existing account with the business email. No task, no email.
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { id: true, email: true, ownerUserId: true },
+    });
+    if (!business?.email || business.ownerUserId) return;
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email: business.email },
       select: { id: true },
     });
-    if (existing) return;
+    if (!existingUser) return;
 
-    const task = await prisma.reachoutTask.create({
-      data: { businessId, autoTriggered: true },
-      select: { id: true },
+    await prisma.business.update({
+      where: { id: business.id },
+      data: { ownerUserId: existingUser.id },
     });
-
-    // Run in background via dynamic import to avoid bundling `after` at call sites
-    const { after } = await import("next/server");
-    after(async () => { await runReachoutTask(task.id); });
   } catch {
     console.error("[ReachoutTask] triggerReachoutOnboarding failed for business", businessId);
   }

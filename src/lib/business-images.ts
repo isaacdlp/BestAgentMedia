@@ -61,6 +61,36 @@ export async function prepareBusinessImages(formData: FormData): Promise<Prepare
   return prepared;
 }
 
+/** Validates an image downloaded from a provider and prepares it for persistence like an upload. */
+export async function prepareBusinessImageFromBuffer(
+  buffer: Buffer,
+  originalName: string,
+  position: number,
+): Promise<PreparedBusinessImage> {
+  if (!buffer.byteLength || buffer.byteLength > maximumImageBytes) {
+    throw new Error("Image is empty or larger than 10 MB.");
+  }
+  let format: string | undefined;
+  try {
+    const metadata = await sharp(buffer, { limitInputPixels: maximumImagePixels }).metadata();
+    format = metadata.format;
+    await sharp(buffer, { limitInputPixels: maximumImagePixels }).stats();
+  } catch {
+    throw new Error("Downloaded file is not a valid image.");
+  }
+  if (format !== "jpeg" && format !== "png" && format !== "webp") {
+    throw new Error("Downloaded image is not JPEG, PNG, or WebP.");
+  }
+  return {
+    buffer,
+    fileName: `${randomUUID()}.${format === "jpeg" ? "jpg" : format}`,
+    originalName: originalName.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 255) || "image",
+    mimeType: `image/${format}`,
+    size: buffer.byteLength,
+    position,
+  };
+}
+
 export async function persistBusinessImages(images: PreparedBusinessImage[]) {
   await mkdir(businessImageDirectory, { recursive: true });
   const saved: string[] = [];

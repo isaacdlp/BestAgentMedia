@@ -12,10 +12,9 @@ const MAX_PICTURE_BYTES = 5 * 1024 * 1024; // 5 MB
 const PICTURE_SIZE = 256; // resize to 256×256
 
 export async function GET(_req: Request, { params }: Params) {
+  // Pictures are shown to everyone on task screens; only uploading is restricted to admins.
   const user = await getCurrentUser();
-  if (!user || user.role !== UserRole.ADMIN) {
-    return new Response("Forbidden", { status: 403 });
-  }
+  if (!user) return new Response("Forbidden", { status: 403 });
   const { id, subId } = await params;
   if (!/^[1-9]\d*$/.test(id) || !/^[1-9]\d*$/.test(subId)) {
     return new Response("Not found", { status: 404 });

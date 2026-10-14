@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
-import { deleteUser, updateUser } from "@/app/actions/users";
+import { deleteUser, updateUser, updateUserPublications } from "@/app/actions/users";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { UserPictureUpload } from "@/components/user-picture-upload";
+import { PublicationAssignments } from "./publication-assignments";
 
 type UserDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -11,7 +13,7 @@ type UserDetailPageProps = {
 
 const roleLabels: Record<UserRole, string> = {
   ADMIN: "Administrator",
-  PUBLISHER: "Publisher",
+  EDITOR: "Editor",
   CONTRIBUTOR: "Contributor",
 };
 
@@ -34,6 +36,7 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
       surname: true,
       email: true,
       phone: true,
+      picturePath: true,
       role: true,
       active: true,
       createdAt: true,
@@ -53,6 +56,17 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
   }
 
   const isSelf = account.id === currentUser.id;
+  const canAssignPublications =
+    account.role === UserRole.EDITOR || account.role === UserRole.ADMIN;
+  const allPublications = canAssignPublications
+    ? await prisma.publication.findMany({
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      })
+    : [];
+  const assignedIds = new Set(
+    account.publicationAccess.map(({ publication }) => publication.id),
+  );
 
   return (
     <>
@@ -77,6 +91,9 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
           <div className="panel-heading">
             <h2>Account information</h2>
           </div>
+          <div style={{ padding: "1rem 1.5rem 0" }}>
+            <UserPictureUpload name={account.name} picturePath={account.picturePath} userId={account.id} />
+          </div>
           <form action={updateUser} className="business-form">
             <input name="id" type="hidden" value={account.id} />
             <div className="business-form-grid">
@@ -90,23 +107,28 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
                 <select name="role" defaultValue={account.role ?? ""}>
                   <option value="">Contributor (no role)</option>
                   <option value="CONTRIBUTOR">Contributor</option>
-                  <option value="PUBLISHER">Publisher</option>
+                  <option value="EDITOR">Editor</option>
                   <option value="ADMIN">Administrator</option>
                 </select>
               </label>
 
-              <label className="business-field">
+              <div className="business-field">
                 <span>Status</span>
-                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.25rem" }}>
+                <label className="switch-field">
                   <input
+                    className="switch-input"
                     name="active"
                     type="checkbox"
                     defaultChecked={account.active}
                     value="on"
                   />
-                  Active account
+                  <span className="switch-track" aria-hidden="true" />
+                  <span className="switch-text">
+                    <strong>Active account</strong>
+                    <small>Inactive accounts cannot sign in.</small>
+                  </span>
                 </label>
-              </label>
+              </div>
             </div>
             <div className="business-form-footer">
               <p className="muted">
@@ -126,7 +148,14 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
           <div className="panel-heading">
             <h2>Publication access</h2>
           </div>
-          {account.publicationAccess.length ? (
+          {canAssignPublications ? (
+            <PublicationAssignments
+              action={updateUserPublications}
+              assignedIds={[...assignedIds]}
+              publications={allPublications}
+              userId={account.id}
+            />
+          ) : account.publicationAccess.length ? (
             <div className="table-wrap">
               <table>
                 <thead>

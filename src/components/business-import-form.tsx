@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { RegionsMap } from "@/components/regions-map";
 import type { RegionSelection } from "@/components/regions-map";
+import { announceTaskStarted, type LaunchedTask } from "@/lib/task-events";
 
 export function BusinessImportForm({
   categories,
@@ -19,8 +20,14 @@ export function BusinessImportForm({
   const [notification, setNotification] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
+  const [categoryQuery, setCategoryQuery] = useState("");
+  const normalizedQuery = categoryQuery.trim().toLowerCase();
+  const visibleCategories = normalizedQuery
+    ? categories.filter((category) => category.toLowerCase().includes(normalizedQuery))
+    : categories;
   const allCategoriesSelected =
-    categories.length > 0 && selectedCategories.length === categories.length;
+    visibleCategories.length > 0 &&
+    visibleCategories.every((category) => selectedCategories.includes(category));
 
   function toggleCategory(category: string) {
     setNotification(null);
@@ -33,7 +40,11 @@ export function BusinessImportForm({
 
   function toggleAllCategories() {
     setNotification(null);
-    setSelectedCategories(allCategoriesSelected ? [] : categories);
+    setSelectedCategories((current) =>
+      allCategoriesSelected
+        ? current.filter((category) => !visibleCategories.includes(category))
+        : [...new Set([...current, ...visibleCategories])],
+    );
   }
 
   async function findZipCode(event: React.FormEvent<HTMLFormElement>) {
@@ -110,11 +121,12 @@ export function BusinessImportForm({
           limit,
         }),
       });
-      const result = (await response.json()) as { id?: string; error?: string };
+      const result = (await response.json()) as { id?: string; task?: LaunchedTask; error?: string };
       if (!response.ok || !result.id) {
         throw new Error(result.error ?? "Unable to start the import task.");
       }
-      router.replace("/businesses/import");
+      if (result.task) announceTaskStarted(result.task);
+      router.replace("/businesses");
     } catch (createError) {
       console.error("Business import task creation failed:", createError);
       setError(
@@ -222,6 +234,13 @@ export function BusinessImportForm({
             </p>
             {categories.length ? (
               <div className="business-import-category-list">
+                <input
+                  aria-label="Search categories"
+                  onChange={(event) => setCategoryQuery(event.target.value)}
+                  placeholder="Search categories…"
+                  type="search"
+                  value={categoryQuery}
+                />
                 <label className="business-import-category business-import-select-all">
                   <input
                     checked={allCategoriesSelected}
@@ -230,11 +249,17 @@ export function BusinessImportForm({
                   />
                   <span>
                     {allCategoriesSelected
-                      ? "Deselect all categories"
-                      : "Select all categories"}
+                      ? normalizedQuery ? "Deselect all matching" : "Deselect all categories"
+                      : normalizedQuery ? "Select all matching" : "Select all categories"}
+                    {selectedCategories.length
+                      ? ` (${selectedCategories.length} selected)`
+                      : ""}
                   </span>
                 </label>
-                {categories.map((category) => (
+                {visibleCategories.length === 0 ? (
+                  <p className="empty-state">No categories match your search.</p>
+                ) : null}
+                {visibleCategories.map((category) => (
                   <label className="business-import-category" key={category}>
                     <input
                       checked={selectedCategories.includes(category)}

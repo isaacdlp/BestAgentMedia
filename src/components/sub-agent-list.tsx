@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ClientListToolbar } from "@/components/list-toolbar";
 import { ClientListPagination } from "@/components/list-pagination";
+import { useBulkSelection, BulkActionBar, BulkCheckbox, bulkDelete, bulkDeleteMessage } from "@/components/bulk-select";
 
 export type SubAgentSummary = {
   id: number;
@@ -57,12 +58,17 @@ export function SubAgentCard({
   subAgent,
   agentId,
   onRefresh,
+  selected = false,
+  onToggleSelect,
+  disabled = false,
 }: {
   subAgent: SubAgentSummary;
   agentId: number;
   onRefresh: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  disabled?: boolean;
 }) {
-  const router = useRouter();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
@@ -89,6 +95,14 @@ export function SubAgentCard({
   return (
     <article className="sub-agent-card">
       <div className="sub-agent-card-header">
+        {onToggleSelect ? (
+          <BulkCheckbox
+            checked={selected}
+            disabled={disabled || deleting}
+            label={`Select sub agent ${subAgent.name}`}
+            onChange={onToggleSelect}
+          />
+        ) : null}
         <SubAgentAvatar agentId={agentId} subAgent={subAgent} />
         <div className="sub-agent-card-info">
           <h3 className="sub-agent-card-name">{subAgent.name}</h3>
@@ -144,6 +158,8 @@ export function SubAgentList({
   const [subAgents, setSubAgents] = useState<SubAgentSummary[]>(initialSubAgents);
   const [total, setTotal] = useState(initialTotal);
   const [creating, setCreating] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const selection = useBulkSelection(subAgents.map((sa) => sa.id));
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("createdAt");
@@ -173,13 +189,11 @@ export function SubAgentList({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Refresh failed.");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, q, sort, order, page, limit]);
 
   useEffect(() => {
     const id = setTimeout(() => { void refresh(); }, q ? 300 : 0);
     return () => clearTimeout(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, sort, order, page, limit]);
 
   async function handleNew() {
@@ -200,6 +214,20 @@ export function SubAgentList({
     }
   }
 
+  async function handleBulkDelete() {
+    const ids = selection.selectedIds;
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} sub agent${ids.length === 1 ? "" : "s"}? All their email threads will also be deleted.`)) return;
+    setBulkBusy(true);
+    setError(null);
+    const { deleted, failed } = await bulkDelete(ids, (id) => `/api/agents/${agentId}/sub-agents/${id}`);
+    selection.clear();
+    await refresh();
+    const message = bulkDeleteMessage(failed, deleted.length);
+    if (message) setError(message);
+    setBulkBusy(false);
+  }
+
   return (
     <section className="panel sub-agent-panel">
       <div className="panel-heading">
@@ -217,9 +245,27 @@ export function SubAgentList({
       />
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {subAgents.length ? (
+        <BulkActionBar
+          allSelected={selection.allSelected}
+          busy={bulkBusy}
+          count={selection.selectedIds.length}
+          onDelete={() => void handleBulkDelete()}
+          onToggleAll={selection.toggleAll}
+          someSelected={selection.someSelected}
+        />
+      ) : null}
+      {subAgents.length ? (
         <div className="sub-agent-grid">
           {subAgents.map((sa) => (
-            <SubAgentCard agentId={agentId} key={sa.id} onRefresh={() => void refresh()} subAgent={sa} />
+            <SubAgentCard
+              agentId={agentId}
+              disabled={bulkBusy}
+              key={sa.id}
+              onRefresh={() => void refresh()}
+              onToggleSelect={() => selection.toggle(sa.id)}
+              selected={selection.isSelected(sa.id)}
+              subAgent={sa}
+            />
           ))}
         </div>
       ) : (

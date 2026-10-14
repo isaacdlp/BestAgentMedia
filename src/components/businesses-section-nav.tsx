@@ -17,7 +17,7 @@ export function BusinessesSectionNav({
       <Link
         aria-current={current === "import" ? "page" : undefined}
         className={current === "import" ? "businesses-section-link-active" : ""}
-        href="/businesses/import"
+        href="/businesses/import/new"
       >
         Import
       </Link>
@@ -26,7 +26,7 @@ export function BusinessesSectionNav({
         className={current === "reachout" ? "businesses-section-link-active" : ""}
         href="/businesses/reachout"
       >
-        Reachout
+        Outreach
       </Link>
     </nav>
   );

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { EmailThreadList } from "@/components/email-thread-view";
 
 type SubAgentConfig = {
@@ -77,7 +77,6 @@ function ConfigField({
 
 export default function SubAgentDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const agentId = Number(params.id);
   const subAgentId = Number(params.subId);
 
@@ -138,7 +137,6 @@ export default function SubAgentDetailPage() {
       } catch { /* silent — visible in UI only on manual check */ }
     }, intervalSecs * 1000);
     return () => { setAutoPollActive(false); window.clearInterval(timer); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.inboxCheckIntervalSeconds, config.imapHost, agentId, subAgentId]);
 
   function updateConfig(field: string, val: string | number | boolean) {

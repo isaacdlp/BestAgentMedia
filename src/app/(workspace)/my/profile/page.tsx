@@ -1,11 +1,12 @@
 import { requireUser } from "@/lib/auth";
+import { UserPictureUpload } from "@/components/user-picture-upload";
 import { updateOwnProfile } from "@/app/actions/users";
 
 export const metadata = { title: "My Profile | BestVersionMedia" };
 
 const roleLabels: Record<string, string> = {
   ADMIN: "Administrator",
-  PUBLISHER: "Publisher",
+  EDITOR: "Editor",
   CONTRIBUTOR: "Contributor",
 };
 
@@ -41,6 +42,7 @@ export default async function MyProfilePage({
       <div className="portal-detail-grid" style={{ gridTemplateColumns: "1fr minmax(220px, 260px)" }}>
         <div className="portal-edit-form">
           <h2>Personal information</h2>
+          <UserPictureUpload name={user.name} picturePath={user.picturePath} userId={user.id} />
           <form action={updateOwnProfile} style={{ display: "grid", gap: "16px" }}>
             <label className="portal-field">
               First name

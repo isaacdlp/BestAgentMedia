@@ -5,7 +5,7 @@ import { RegionsWorkspace } from "./regions-workspace";
 
 export default async function RegionsPage() {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
   return <RegionsWorkspace />;

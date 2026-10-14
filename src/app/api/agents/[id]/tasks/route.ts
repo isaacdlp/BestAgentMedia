@@ -47,6 +47,7 @@ export async function GET(
         startedAt: true,
         completedAt: true,
         triggeredBy: { select: { name: true, surname: true } },
+        registry: { select: { id: true } },
       },
     }),
     prisma.agentTask.count({ where }),

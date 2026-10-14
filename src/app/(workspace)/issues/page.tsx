@@ -2,11 +2,11 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
-import { createIssue } from "@/app/actions/content";
-import { getIssueScope, getPublicationScope } from "@/lib/access";
+import { getIssueScope } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListPagination } from "@/components/list-pagination";
+import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
 
@@ -27,10 +27,22 @@ export default async function IssuesPage({
   const sp = await searchParams;
   const { page, limit, skip, q, sort, order } = parseListParams(sp, "publicationDate", "desc");
 
+  const publicationIdParam = Number(Array.isArray(sp.publicationId) ? sp.publicationId[0] : sp.publicationId);
+  const publicationId = Number.isInteger(publicationIdParam) && publicationIdParam > 0 ? publicationIdParam : null;
+  const filteredPublication = publicationId
+    ? await prisma.publication.findUnique({ where: { id: publicationId }, select: { name: true } })
+    : null;
+
   const where = {
     ...baseWhere,
+    ...(publicationId ? { publicationId } : {}),
     ...(q
-      ? { publication: { name: { contains: q, mode: "insensitive" as const } } }
+      ? {
+          OR: [
+            { name: { contains: q, mode: "insensitive" as const } },
+            { publication: { name: { contains: q, mode: "insensitive" as const } } },
+          ],
+        }
       : {}),
   };
 
@@ -39,34 +51,24 @@ export default async function IssuesPage({
       ? [{ status: order }, { publicationDate: "desc" as const }]
       : [{ publicationDate: order }, { publication: { name: "asc" as const } }];
 
-  const [publicationScope, [issues, total]] = await Promise.all([
-    getPublicationScope(user),
-    Promise.all([
-      prisma.issue.findMany({
-        where,
-        orderBy,
-        skip,
-        take: limit,
-        select: {
-          id: true,
-          publicationDate: true,
-          status: true,
-          publication: { select: { name: true } },
-          _count: { select: { pages: true } },
-        },
-      }),
-      prisma.issue.count({ where }),
-    ]),
+  const [issues, total] = await Promise.all([
+    prisma.issue.findMany({
+      where,
+      orderBy,
+      skip,
+      take: limit,
+      select: {
+        id: true,
+        name: true,
+        publicationDate: true,
+        status: true,
+        publication: { select: { name: true } },
+        _count: { select: { pages: true } },
+      },
+    }),
+    prisma.issue.count({ where }),
   ]);
-
-  const publications = publicationScope
-    ? await prisma.publication.findMany({
-        where: publicationScope,
-        orderBy: { name: "asc" },
-        select: { id: true, name: true },
-      })
-    : [];
-  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.PUBLISHER;
+  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
 
   return (
     <>
@@ -76,51 +78,44 @@ export default async function IssuesPage({
           <h1>Issues</h1>
           <p className="muted">Plan releases and arrange articles and advertisements on each page.</p>
         </div>
+        {canManage ? <Link className="button button-primary" href={publicationId ? `/issues/new?publicationId=${publicationId}` : "/issues/new"}>Create issue</Link> : null}
       </div>
-      {canManage ? (
-        <section className="panel issue-create-panel">
-          <div className="panel-heading"><h2>Create an issue</h2></div>
-          <form action={createIssue} className="inline-edit issue-create-form">
-            <label className="business-field">
-              <span>Publication</span>
-              <select name="publicationId" required>
-                <option value="">Choose publication</option>
-                {publications.map((publication) => (
-                  <option key={publication.id} value={publication.id}>{publication.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="business-field">
-              <span>Publication date</span>
-              <input defaultValue={new Date().toISOString().slice(0, 10)} name="publicationDate" required type="date" />
-            </label>
-            <button className="button button-primary" type="submit">Create issue</button>
-          </form>
-        </section>
-      ) : null}
       <section className="panel table-panel">
         <div className="panel-heading">
-          <h2>All issues <span className="count-badge">{total}</span></h2>
+          <h2>
+            {filteredPublication ? `Issues of ${filteredPublication.name}` : "All issues"}{" "}
+            <span className="count-badge">{total}</span>
+          </h2>
+          {filteredPublication ? <Link className="text-link" href="/issues">Show all issues</Link> : null}
         </div>
         <Suspense>
           <ListToolbar sortOptions={SORT_OPTIONS} defaultSort="publicationDate" defaultOrder="desc" />
         </Suspense>
         {issues.length ? (
+          <RecordDeleteScope
+            apiBase="/api/issues"
+            bulk={user.role === UserRole.ADMIN}
+            ids={issues.map((issue) => issue.id)}
+            noun="issue"
+          >
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Publication</th><th>Publication date</th><th>Status</th><th>Pages</th></tr></thead>
+              <thead><tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Issue</th><th>Publication</th><th>Publication date</th><th>Status</th><th>Pages</th></tr></thead>
               <tbody>
                 {issues.map((issue) => (
                   <tr key={issue.id}>
-                    <td className="table-primary"><Link className="text-link" href={`/issues/${issue.id}`}>{issue.publication.name}</Link></td>
+                    <RecordSelectCell id={issue.id} label={issue.name} />
+                    <td className="table-primary"><Link className="text-link" href={`/issues/${issue.id}`}>{issue.name}</Link></td>
+                    <td>{issue.publication.name}</td>
                     <td>{issue.publicationDate.toISOString().slice(0, 10)}</td>
                     <td><span className="status-pill">{formatStatus(issue.status)}</span></td>
                     <td>{issue._count.pages}</td>
-                  </tr>
+</tr>
                 ))}
               </tbody>
             </table>
           </div>
+          </RecordDeleteScope>
         ) : (
           <div className="empty-state">{q ? `No issues match "${q}".` : "No issues have been created yet."}</div>
         )}

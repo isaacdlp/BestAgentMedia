@@ -174,7 +174,6 @@ export function EmailThreadList({ subAgentId }: { subAgentId: number }) {
   useEffect(() => {
     const id = setTimeout(() => { void refresh(); }, q ? 300 : 0);
     return () => clearTimeout(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subAgentId, q, sort, order, page, limit]);
 
   if (selectedId) {

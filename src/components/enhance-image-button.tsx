@@ -1,265 +1,184 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { AgentBadge } from "@/components/agent-badge";
+import { announceTaskStarted, type LaunchedTask } from "@/lib/task-events";
 
 type ImageType = "submission" | "article" | "business" | "ad" | "publication";
 
-type Phase = "idle" | "form" | "enhancing" | "result" | "applying";
+const SUGGESTIONS = [
+  "Brighten and balance exposure",
+  "Improve color and contrast",
+  "Sharpen details",
+  "Crop tighter on the subject",
+  "Remove distracting background elements",
+  "Remove watermark or text",
+];
 
+const MAX_LENGTH = 1000;
+
+/**
+ * Opens a short instructions dialog and launches an image enhancement Task. The dialog closes
+ * as soon as the task starts; the result is reviewed on the task page.
+ */
 export function EnhanceImageButton({
   imageType,
   imageId,
   parentId,
-  originalImageSrc,
-  agentPath,
   label = "Enhance",
 }: {
   imageType: ImageType;
   imageId: string;
   parentId: string;
-  /** URL of the original image, used for the side-by-side comparison */
-  originalImageSrc: string;
-  agentPath: string;
   label?: string;
 }) {
-  const router = useRouter();
-  const [phase, setPhase] = useState<Phase>("idle");
+  const [open, setOpen] = useState(false);
   const [customInstructions, setCustomInstructions] = useState("");
   const [error, setError] = useState("");
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [iterateFromTaskId, setIterateFromTaskId] = useState<string | null>(null);
-  const [applying, setApplying] = useState(false);
-  const [applyError, setApplyError] = useState("");
+  const [starting, setStarting] = useState(false);
 
-  function openForm() {
-    setError("");
-    setApplyError("");
-    setPhase("form");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    textareaRef.current?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !starting) {
+        setOpen(false);
+        setError("");
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, starting]);
+
+  function addSuggestion(text: string) {
+    setCustomInstructions((current) => {
+      const trimmed = current.trim();
+      if (trimmed.toLowerCase().includes(text.toLowerCase())) return current;
+      const next = trimmed ? `${trimmed.replace(/[.;,]$/, "")}; ${text.toLowerCase()}` : text;
+      return next.slice(0, MAX_LENGTH);
+    });
+    textareaRef.current?.focus();
   }
 
-  function cancelForm() {
-    setPhase("idle");
+  function close() {
+    setOpen(false);
     setError("");
-    setIterateFromTaskId(null);
   }
 
   async function handleEnhance() {
     setError("");
-    setPhase("enhancing");
+    setStarting(true);
     try {
       const res = await fetch("/api/creative/enhance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageType,
-          imageId,
-          parentId,
-          customInstructions,
-          ...(iterateFromTaskId ? { iterateFromTaskId } : {}),
-        }),
+        body: JSON.stringify({ imageType, imageId, parentId, customInstructions }),
       });
-      const data = (await res.json()) as { taskId?: string; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Enhancement failed.");
-      setTaskId(data.taskId ?? null);
-      setPhase("result");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Enhancement failed.");
-      setPhase("form");
-    }
-  }
-
-  async function handleApply(action: "remove" | "overwrite" | "keep" | "iterate") {
-    if (!taskId) return;
-    setApplyError("");
-
-    if (action === "iterate") {
-      setIterateFromTaskId(taskId);
-      setTaskId(null);
+      const data = (await res.json()) as { task?: LaunchedTask; error?: string };
+      if (!res.ok || !data.task) throw new Error(data.error ?? "Enhancement could not be started.");
+      announceTaskStarted(data.task);
       setCustomInstructions("");
-      setPhase("form");
-      return;
-    }
-
-    setApplying(true);
-    setPhase("applying");
-    try {
-      const res = await fetch(`/api/creative/tasks/${taskId}/apply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      const data = (await res.json()) as { message?: string; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Action failed.");
-      router.refresh();
-      setPhase("idle");
-      setTaskId(null);
-      setCustomInstructions("");
-      setIterateFromTaskId(null);
+      setOpen(false);
     } catch (err) {
-      setApplyError(err instanceof Error ? err.message : "Action failed.");
-      setPhase("result");
+      setError(err instanceof Error ? err.message : "Enhancement could not be started.");
     } finally {
-      setApplying(false);
+      setStarting(false);
     }
   }
 
-  if (phase === "idle") {
+  if (!open) {
     return (
-      <button className="button button-secondary" type="button" onClick={openForm}>
+      <button className="button button-primary" type="button" onClick={() => setOpen(true)}>
         {label}
       </button>
     );
   }
 
-  const isPublicationCover = imageType === "publication";
-
   return (
-    <div className="enhance-overlay" role="dialog" aria-modal="true" aria-label="Enhance image">
+    <div
+      className="enhance-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Enhance image"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !starting) close();
+      }}
+    >
       <div className="enhance-modal">
-        {phase === "form" && (
-          <>
-            <div className="enhance-modal-header">
-              <h2>Enhance image{iterateFromTaskId ? " — iteration" : ""}</h2>
-              <button className="enhance-modal-close" type="button" aria-label="Close" onClick={cancelForm}>×</button>
-            </div>
+        <div className="enhance-modal-header">
+          <h2>Enhance image</h2>
+          <button className="enhance-modal-close" type="button" aria-label="Close" onClick={close}>×</button>
+        </div>
 
-            {iterateFromTaskId ? (
-              <p className="muted enhance-modal-hint">
-                Using the previous enhanced image as the source for this pass.
-              </p>
-            ) : null}
+        <div className="enhance-modal-body">
+          <AgentBadge agentSlug="creative" />
+          <p className="enhance-intro">
+            The Creative agent will improve the image&apos;s quality for print. Pick a few quick
+            adjustments or describe exactly what you want.
+          </p>
 
-            <label className="enhance-label">
-              <span>
-                Custom instructions{" "}
-                <span className="muted">(optional)</span>
-              </span>
-              <textarea
-                className="enhance-textarea"
-                rows={3}
-                placeholder={`Add your own notes — e.g. "brighten the sky", "remove the watermark", "crop tighter on the subject"…`}
-                value={customInstructions}
-                onChange={(e) => setCustomInstructions(e.target.value)}
-              />
-            </label>
-
-            {error ? <p className="form-error">{error}</p> : null}
-
-            <div className="enhance-modal-actions">
-              <button className="button button-secondary" type="button" onClick={cancelForm}>
-                Cancel
-              </button>
+          <div className="enhance-chips" aria-label="Quick adjustments">
+            {SUGGESTIONS.map((text) => (
               <button
-                className="button button-primary"
+                key={text}
+                className="enhance-chip"
                 type="button"
-                onClick={() => void handleEnhance()}
+                disabled={starting}
+                onClick={() => addSuggestion(text)}
               >
-                Enhance
+                + {text}
               </button>
-            </div>
-          </>
-        )}
-
-        {phase === "enhancing" && (
-          <div className="enhance-modal-loading">
-            <div className="enhance-spinner" aria-hidden="true" />
-            <p>Enhancing image…</p>
-            <p className="muted">This may take 10–30 seconds.</p>
+            ))}
           </div>
-        )}
 
-        {(phase === "result" || phase === "applying") && taskId && (
-          <>
-            <div className="enhance-modal-header">
-              <h2>Enhanced result</h2>
-            </div>
+          <label className="enhance-label">
+            <span>
+              Custom instructions <span className="muted">(optional)</span>
+            </span>
+            <textarea
+              ref={textareaRef}
+              className="enhance-textarea"
+              rows={4}
+              maxLength={MAX_LENGTH}
+              placeholder={`e.g. "brighten the sky", "remove the watermark", "crop tighter on the subject"`}
+              value={customInstructions}
+              disabled={starting}
+              onChange={(e) => setCustomInstructions(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !starting) {
+                  e.preventDefault();
+                  void handleEnhance();
+                }
+              }}
+            />
+            <span className="enhance-counter muted">
+              {customInstructions.length}/{MAX_LENGTH} · Ctrl+Enter to start
+            </span>
+          </label>
 
-            <div className="enhance-result-images">
-              <div className="enhance-result-col">
-                <p className="enhance-result-label muted">Original</p>
-                <img
-                  alt="Original image"
-                  className="enhance-result-img"
-                  src={originalImageSrc}
-                />
-              </div>
-              <div className="enhance-result-col">
-                <p className="enhance-result-label muted">Enhanced</p>
-                <img
-                  alt="Enhanced image"
-                  className="enhance-result-img enhance-result-img-new"
-                  src={`/api/creative/tasks/${taskId}/image`}
-                />
-              </div>
-            </div>
+          <p className="muted enhance-modal-hint">
+            The Creative agent works in the background. You&apos;ll be notified when the result is ready
+            to review in Tasks — the original stays untouched until you accept it.
+          </p>
 
-            {applyError ? <p className="form-error">{applyError}</p> : null}
+          {error ? <p className="form-error">{error}</p> : null}
+        </div>
 
-            <div className="enhance-result-actions">
-              <button
-                className="button button-secondary button-danger"
-                type="button"
-                disabled={applying}
-                onClick={() => void handleApply("remove")}
-              >
-                Remove
-              </button>
-              <button
-                className="button button-secondary"
-                type="button"
-                disabled={applying}
-                onClick={() => void handleApply("overwrite")}
-              >
-                {isPublicationCover ? "Replace cover" : "Overwrite original"}
-              </button>
-              {!isPublicationCover ? (
-                <button
-                  className="button button-secondary"
-                  type="button"
-                  disabled={applying}
-                  onClick={() => void handleApply("keep")}
-                >
-                  Keep as new
-                </button>
-              ) : null}
-              <button
-                className="button button-primary"
-                type="button"
-                disabled={applying}
-                onClick={() => void handleApply("iterate")}
-              >
-                Iterate
-              </button>
-            </div>
-
-            <p className="enhance-result-hint muted">
-              <strong>Remove</strong> discards the result.{" "}
-              <strong>{isPublicationCover ? "Replace cover" : "Overwrite original"}</strong> replaces
-              the original in place.
-              {!isPublicationCover ? (
-                <>
-                  {" "}
-                  <strong>Keep as new</strong> saves the enhanced version alongside the original.
-                </>
-              ) : null}{" "}
-              <strong>Iterate</strong> uses this result as the source for another enhancement pass.
-            </p>
-
-            <div className="enhance-result-agent-link">
-              <a className="text-link" href={agentPath}>
-                View in Creative agent →
-              </a>
-            </div>
-          </>
-        )}
-
-        {phase === "applying" && (
-          <div className="enhance-applying-overlay">
-            <div className="enhance-spinner" aria-hidden="true" />
-            <p>Applying…</p>
-          </div>
-        )}
+        <div className="enhance-modal-actions">
+          <button className="button button-secondary" type="button" onClick={close}>
+            Cancel
+          </button>
+          <button
+            className="button button-primary"
+            disabled={starting}
+            type="button"
+            onClick={() => void handleEnhance()}
+          >
+            {starting ? "Starting…" : "Start enhancement"}
+          </button>
+        </div>
       </div>
     </div>
   );

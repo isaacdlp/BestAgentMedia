@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { updateAdvertisementStatus } from "@/app/actions/records";
 import { getAdvertisementScope } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListPagination } from "@/components/list-pagination";
+import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
 
@@ -61,7 +61,7 @@ export default async function AdsPage({
     }),
     prisma.advertisement.count({ where }),
   ]);
-  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.PUBLISHER;
+  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
 
   return (
     <>
@@ -85,10 +85,16 @@ export default async function AdsPage({
           <ListToolbar sortOptions={SORT_OPTIONS} defaultSort="updatedAt" defaultOrder="desc" />
         </Suspense>
         {ads.length ? (
+          <RecordDeleteScope
+            apiBase="/api/ads"
+            bulk={user.role === UserRole.ADMIN}
+            ids={ads.map((ad) => ad.id)}
+            noun="ad"
+          >
           <div className="table-wrap">
             <table>
               <thead>
-                <tr>
+                <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} />
                   <th>Ad</th>
                   <th>Business</th>
                   <th>Publications</th>
@@ -100,6 +106,7 @@ export default async function AdsPage({
               <tbody>
                 {ads.map((ad) => (
                   <tr key={ad.id}>
+                    <RecordSelectCell id={ad.id} label={ad.title} />
                     <td className="table-primary">
                       <Link className="text-link" href={`/ads/${ad.id}`}>{ad.title}</Link>
                     </td>
@@ -125,11 +132,12 @@ export default async function AdsPage({
                         </form>
                       </td>
                     ) : null}
-                  </tr>
+</tr>
                 ))}
               </tbody>
             </table>
           </div>
+          </RecordDeleteScope>
         ) : (
           <div className="empty-state">{q ? `No ads match "${q}".` : "No advertisements are available yet."}</div>
         )}

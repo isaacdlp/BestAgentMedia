@@ -8,7 +8,7 @@ type Params = { params: Promise<{ id: string; taskId: string }> };
 export async function POST(_request: Request, { params }: Params) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Sign in to redeploy a layout." }, { status: 401 });
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     return NextResponse.json({ error: "You cannot redeploy issue layouts." }, { status: 403 });
   }
 
@@ -39,7 +39,7 @@ export async function POST(_request: Request, { params }: Params) {
   });
   if (!issue) return NextResponse.json({ error: "The associated issue no longer exists." }, { status: 404 });
 
-  if (user.role === UserRole.PUBLISHER) {
+  if (user.role === UserRole.EDITOR) {
     const access = await prisma.publicationPublisher.findUnique({
       where: { userId_publicationId: { userId: user.id, publicationId: issue.publicationId } },
     });

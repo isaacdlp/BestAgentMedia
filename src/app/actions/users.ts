@@ -83,6 +83,51 @@ export async function updateUser(formData: FormData) {
   redirect(`/users/${data.id}`);
 }
 
+export async function updateUserPublications(formData: FormData) {
+  const currentUser = await requireUser();
+  if (currentUser.role !== UserRole.ADMIN) {
+    redirect("/dashboard");
+  }
+
+  const userId = z.string().min(1).parse(formData.get("id"));
+  const publicationIds = [
+    ...new Set(
+      z
+        .array(z.coerce.number().int().positive())
+        .parse(formData.getAll("publicationIds")),
+    ),
+  ];
+
+  const target = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+  if (target?.role !== UserRole.EDITOR && target?.role !== UserRole.ADMIN) {
+    redirect(`/users/${userId}`);
+  }
+
+  const validIds = (
+    await prisma.publication.findMany({
+      where: { id: { in: publicationIds } },
+      select: { id: true },
+    })
+  ).map((publication) => publication.id);
+
+  await prisma.$transaction([
+    prisma.publicationPublisher.deleteMany({
+      where: { userId, publicationId: { notIn: validIds } },
+    }),
+    prisma.publicationPublisher.createMany({
+      data: validIds.map((publicationId) => ({ userId, publicationId })),
+      skipDuplicates: true,
+    }),
+  ]);
+
+  revalidatePath("/users");
+  revalidatePath(`/users/${userId}`);
+  redirect(`/users/${userId}`);
+}
+
 export async function deleteUser(formData: FormData) {
   const currentUser = await requireUser();
   if (currentUser.role !== UserRole.ADMIN) {

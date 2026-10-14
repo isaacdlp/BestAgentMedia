@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import { UserRole } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { enhanceImage, type ImageType } from "@/lib/creative-agent";
+import { launchEnhanceImage, type ImageType } from "@/lib/creative-agent";
+
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Sign in to enhance images." }, { status: 401 });
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
-    return NextResponse.json({ error: "Administrators and publishers only." }, { status: 403 });
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
+    return NextResponse.json({ error: "Administrators and editors only." }, { status: 403 });
   }
 
   let body: {
@@ -118,7 +120,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const taskId = await enhanceImage({
+    const task = await launchEnhanceImage({
       imageType: typedImageType,
       imageId,
       parentId,
@@ -129,9 +131,9 @@ export async function POST(request: Request) {
       triggeredById: user.id,
       iterateFromTaskId: iterFromId,
     });
-    return NextResponse.json({ taskId }, { status: 201 });
+    return NextResponse.json({ task }, { status: 202 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Enhancement failed.";
+    const message = error instanceof Error ? error.message : "Enhancement could not be started.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

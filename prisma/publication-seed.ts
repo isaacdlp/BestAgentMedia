@@ -24,6 +24,10 @@ export async function seedPublications(prisma: PrismaClient) {
     }
   }
 
+  const descriptions = JSON.parse(
+    await readFile(resolve(sourceDirectory, "descriptions.json"), "utf8"),
+  ) as Record<string, string>;
+
   const sourceFiles = await readdir(sourceDirectory);
   const coverImages = new Map(
     sourceFiles
@@ -50,8 +54,9 @@ export async function seedPublications(prisma: PrismaClient) {
   for (const { name, zipCodes: codes, coverImage } of publications) {
     const existingPublication = await prisma.publication.findUnique({
       where: { name },
-      select: { id: true },
+      select: { id: true, description: true },
     });
+    const description = descriptions[name] ?? null;
     const slug = slugify(name);
     const publicationWithSlug = await prisma.publication.findUnique({
       where: { slug },
@@ -94,6 +99,8 @@ export async function seedPublications(prisma: PrismaClient) {
       where: { name },
       update: {
         slug,
+        // Never overwrite a description an administrator has already written.
+        ...(existingPublication?.description ? {} : { description }),
         zipCodes: {
           set: codes.map((code) => ({ code })),
         },
@@ -101,6 +108,7 @@ export async function seedPublications(prisma: PrismaClient) {
       create: {
         name,
         slug,
+        description,
         coverImagePath,
         zipCodes: {
           connect: codes.map((code) => ({ code })),

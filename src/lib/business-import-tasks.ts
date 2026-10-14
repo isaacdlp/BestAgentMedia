@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 import { buildPublicationMapData, geometryContainsCoordinate } from "@/lib/zip-code-map";
 import { triggerReachoutOnboarding } from "@/lib/reachout-tasks";
 
-const hereSearchUrl = "https://discover.search.hereapi.com/v1/discover";
+const hereSearchHost = "browse.search.hereapi.com";
+const hereSearchUrl = `https://${hereSearchHost}/v1/browse`;
 const herePageSize = 100;
 const requestTimeoutMs = 20_000;
 
@@ -62,10 +63,20 @@ export async function runBusinessImportTask(taskId: string) {
     const inBox = `${southWest[1]},${southWest[0]},${northEast[1]},${northEast[0]}`;
     const seenExternalIds = new Set<string>();
 
+    const categoryRows = await prisma.hereCategory.findMany({
+      where: { name: { in: task.categories } },
+      select: { name: true, hereId: true },
+    });
+    const hereIdByName = new Map(categoryRows.map(({ name, hereId }) => [name, hereId]));
+    const unknownCategories = task.categories.filter((name) => !hereIdByName.has(name));
+    if (unknownCategories.length) {
+      throw new Error(`Unknown HERE categories: ${unknownCategories.join(", ")}.`);
+    }
+
     for (const category of task.categories) {
       let nextUrl: URL | null = createHereSearchUrl({
         apiKey,
-        category,
+        categoryId: hereIdByName.get(category)!,
         inBox,
       });
 
@@ -213,17 +224,20 @@ async function isTaskRunning(taskId: string) {
 
 function createHereSearchUrl({
   apiKey,
-  category,
+  categoryId,
   inBox,
 }: {
   apiKey: string;
-  category: string;
+  categoryId: string;
   inBox: string;
 }) {
   const url = new URL(hereSearchUrl);
   url.searchParams.set("apiKey", apiKey);
   url.searchParams.set("in", `bbox:${inBox}`);
-  url.searchParams.set("q", category);
+  // Browse requires "at"; use the box centre (inBox is west,south,east,north).
+  const [west, south, east, north] = inBox.split(",").map(Number);
+  url.searchParams.set("at", `${(south + north) / 2},${(west + east) / 2}`);
+  url.searchParams.set("categories", categoryId);
   url.searchParams.set("limit", String(herePageSize));
   return url;
 }
@@ -271,7 +285,7 @@ function getNextHerePage(next: string | null, apiKey: string) {
     return null;
   }
   const url = new URL(next, hereSearchUrl);
-  if (url.protocol !== "https:" || url.hostname !== "discover.search.hereapi.com") {
+  if (url.protocol !== "https:" || url.hostname !== hereSearchHost) {
     throw new Error("HERE Maps returned an invalid pagination URL.");
   }
   url.searchParams.set("apiKey", apiKey);

@@ -14,7 +14,7 @@ const recordIdSchema = z.string().regex(/^[\w-]{1,64}$/);
 
 export async function updateSubmissionStatus(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 
@@ -41,7 +41,7 @@ export async function updateSubmissionStatus(formData: FormData) {
 
 export async function updateAdvertisementStatus(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 

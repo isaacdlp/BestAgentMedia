@@ -20,8 +20,8 @@ export async function GET(
   }
   const businessId = Number(id);
 
-  // Admins, publishers, and the business owner can view images
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  // Admins, editors, and the business owner can view images
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     const business = await prisma.business.findUnique({
       where: { id: businessId },
       select: { ownerUserId: true },

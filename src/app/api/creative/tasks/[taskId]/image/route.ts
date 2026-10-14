@@ -12,7 +12,7 @@ export async function GET(
 ) {
   const user = await getCurrentUser();
   if (!user) return new NextResponse("Unauthorized", { status: 401 });
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 

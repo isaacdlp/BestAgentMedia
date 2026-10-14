@@ -126,14 +126,22 @@ export function RegionsWorkspace() {
               <div className="region-publications">
                 <h3>Associated publications</h3>
                 {selection.publications.length ? (
-                  <ul>
+                  <ul className="region-publication-list">
                     {selection.publications.map((publication) => (
-                      <li key={publication.id}>
+                      <li className="region-publication" key={publication.id}>
                         <Link
                           className="text-link"
                           href={`/publications/${publication.id}`}
                         >
-                          {publication.name}
+                          {publication.coverImageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              alt={`${publication.name} cover`}
+                              className="region-publication-cover"
+                              src={publication.coverImageUrl}
+                            />
+                          ) : null}
+                          <span>{publication.name}</span>
                         </Link>
                       </li>
                     ))}

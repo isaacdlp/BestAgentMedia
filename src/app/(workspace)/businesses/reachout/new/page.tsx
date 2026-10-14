@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { BusinessesSectionNav } from "@/components/businesses-section-nav";
+import { AgentBadge } from "@/components/agent-badge";
 import { ClientListToolbar } from "@/components/list-toolbar";
 import { ClientListPagination } from "@/components/list-pagination";
+import { announceTaskStarted, type LaunchedTask } from "@/lib/task-events";
 
 type BusinessRow = {
   id: number;
@@ -55,13 +56,11 @@ export default function NewReachoutPage() {
     } finally {
       setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, sort, order, page, limit]);
 
   useEffect(() => {
     const id = setTimeout(() => { void loadBusinesses(); }, q ? 300 : 0);
     return () => clearTimeout(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, sort, order, page, limit]);
 
   function toggleAll() {
@@ -97,9 +96,10 @@ export default function NewReachoutPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ businessIds: ids }),
       });
-      const data = (await res.json()) as { created?: number; error?: string };
+      const data = (await res.json()) as { created?: number; tasks?: LaunchedTask[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to create tasks.");
-      router.push("/businesses/reachout");
+      announceTaskStarted(data.tasks ?? []);
+      router.push("/businesses");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create tasks.");
       setSubmitting(false);
@@ -116,9 +116,9 @@ export default function NewReachoutPage() {
           <p className="eyebrow"><Link href="/businesses/reachout">← Reachout tasks</Link></p>
           <h1>New onboarding task</h1>
           <p className="muted">Select businesses to start the onboarding email sequence for.</p>
+          <AgentBadge agentSlug="assistant" />
         </div>
       </div>
-      <BusinessesSectionNav current="reachout" />
 
       <section className="panel">
         <div className="panel-heading">

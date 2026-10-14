@@ -9,7 +9,7 @@ datasource db {
 
 enum UserRole {
   ADMIN
-  PUBLISHER
+  EDITOR
   CONTRIBUTOR
 }
 
@@ -76,12 +76,27 @@ enum MessageDirection {
   INBOUND
 }
 
+enum TaskSource {
+  AGENT
+  BUSINESS_IMPORT
+  REACHOUT
+}
+
+enum TaskStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  STOPPED
+}
+
 model User {
   id                  String                 @id @default(cuid())
   email               String                 @unique
   name                String
   surname             String                 @default("")
   phone               String?
+  picturePath         String?
   passwordHash        String
   authVersion         Int                    @default(0)
   role                UserRole?
@@ -96,12 +111,14 @@ model User {
   agentTasks          AgentTask[]
   reachoutTasks       ReachoutTask[]
   passwordResetTokens PasswordResetToken[]
+  tasks               Task[]
 }
 
 model Publication {
   id              Int                        @id @default(autoincrement())
   name            String                     @unique
   slug            String                     @unique
+  description     String?
   coverImagePath  String?
   createdAt       DateTime                   @default(now())
   updatedAt       DateTime                   @updatedAt
@@ -119,6 +136,7 @@ model ZipCode {
   boundaryGeometry        Json?         @db.JsonB
   centroidLatitude        Float?
   centroidLongitude       Float?
+  areaSquareMiles         Float?
   boundaryVintage         Int?
   estimatedPopulation     Int?
   populationMarginOfError Int?
@@ -196,6 +214,7 @@ model ReachoutTask {
   subAgent           SubAgent?          @relation(fields: [subAgentId], references: [id], onDelete: SetNull)
   thread             EmailThread?       @relation(fields: [threadId], references: [id], onDelete: SetNull)
   createdBy          User?              @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  registry           Task?
 
   @@index([businessId])
   @@index([status, createdAt])
@@ -244,6 +263,15 @@ model Business {
   @@index([importTaskId])
 }
 
+model HereCategory {
+  id        Int      @id @default(autoincrement())
+  hereId    String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  @@index([name])
+}
+
 model BusinessImportTask {
   id               String                   @id @default(cuid())
   sourceProvider   String
@@ -259,6 +287,7 @@ model BusinessImportTask {
   createdByUserId  String
   createdBy        User                     @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
   businesses       Business[]
+  registry         Task?
 
   @@index([startedAt])
   @@index([status, startedAt])
@@ -328,6 +357,9 @@ model BusinessImage {
 model Issue {
   id              String      @id @default(cuid())
   publicationId   Int
+  name            String
+  slug            String
+  description     String?
   publicationDate DateTime    @db.Date
   status          IssueStatus @default(DRAFT)
   designJson      Json?       @db.JsonB
@@ -338,6 +370,7 @@ model Issue {
   agentTasks      AgentTask[]
 
   @@unique([publicationId, publicationDate])
+  @@unique([publicationId, slug])
   @@index([publicationId, status, publicationDate])
 }
 
@@ -457,10 +490,14 @@ model Agent {
   description String
   enabled     Boolean     @default(true)
   settings    Json        @default("{}") @db.JsonB
+  /// Optional human-style name and picture for agents that have no sub-agents (Designer, Creative, Copywriter).
+  personaName String?
+  picturePath String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   tasks       AgentTask[]
   subAgents   SubAgent[]
+  registry    Task[]
 }
 
 model SubAgent {
@@ -483,7 +520,7 @@ model SubAgent {
 
 model AgentTask {
   id            String          @id @default(cuid())
-  agentId       Int
+  agentId       Int?
   subAgentId    Int?
   status        AgentTaskStatus @default(PENDING)
   label         String
@@ -495,16 +532,48 @@ model AgentTask {
   createdAt     DateTime        @default(now())
   startedAt     DateTime?
   completedAt   DateTime?
-  agent         Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agent         Agent?          @relation(fields: [agentId], references: [id], onDelete: Cascade)
   subAgent      SubAgent?       @relation(fields: [subAgentId], references: [id], onDelete: SetNull)
   issue         Issue?          @relation(fields: [issueId], references: [id], onDelete: SetNull)
   triggeredBy   User?           @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
   emailThreads  EmailThread[]
+  registry      Task?
 
   @@index([agentId, createdAt])
   @@index([status, createdAt])
   @@index([issueId])
   @@index([subAgentId])
+}
+
+// Unified registry of long-running operations shown in the Tasks section. Rows are
+// created and kept in sync by database triggers on the backing tables (see the
+// 20261014150000_task_registry migration); application code only reads them and sets
+// notifiedAt. Details stay on the backing record referenced by agentTaskId,
+// businessImportTaskId, or reachoutTaskId.
+model Task {
+  id                   Int                 @id @default(autoincrement())
+  source               TaskSource
+  name                 String
+  status               TaskStatus
+  agentId              Int?
+  createdByUserId      String?
+  agentTaskId          String?             @unique
+  businessImportTaskId String?             @unique
+  reachoutTaskId       String?             @unique
+  createdAt            DateTime            @default(now())
+  finishedAt           DateTime?
+  notifiedAt           DateTime?
+  updatedAt            DateTime            @default(now())
+  agent                Agent?              @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  createdBy            User?               @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  agentTask            AgentTask?          @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+  businessImportTask   BusinessImportTask? @relation(fields: [businessImportTaskId], references: [id], onDelete: Cascade)
+  reachoutTask         ReachoutTask?       @relation(fields: [reachoutTaskId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([agentId, createdAt])
+  @@index([createdByUserId, notifiedAt])
 }
 
 model EmailThread {

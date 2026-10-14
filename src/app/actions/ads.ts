@@ -49,7 +49,7 @@ const adUpdateSchema = z.object({
 
 export async function createAdvertisement(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 
@@ -72,7 +72,7 @@ export async function createAdvertisement(formData: FormData) {
   if (!business) throw new Error("Business not found.");
 
   // Verify publications exist (and scope for publishers)
-  if (user.role === UserRole.PUBLISHER) {
+  if (user.role === UserRole.EDITOR) {
     const assignments = await prisma.publicationPublisher.findMany({
       where: { userId: user.id },
       select: { publicationId: true },
@@ -152,7 +152,7 @@ export async function createAdvertisement(formData: FormData) {
 
 export async function updateAdvertisement(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 
@@ -177,7 +177,7 @@ export async function updateAdvertisement(formData: FormData) {
   if (!ad) throw new Error("Advertisement not found or not accessible.");
 
   // Verify publications scope for publishers
-  if (user.role === UserRole.PUBLISHER) {
+  if (user.role === UserRole.EDITOR) {
     const assignments = await prisma.publicationPublisher.findMany({
       where: { userId: user.id },
       select: { publicationId: true },
@@ -209,7 +209,7 @@ export async function updateAdvertisement(formData: FormData) {
 
 export async function updateAdStatus(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 
@@ -230,7 +230,7 @@ export async function updateAdStatus(formData: FormData) {
 
 export async function deleteAdImage(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 
@@ -256,7 +256,7 @@ export async function deleteAdImage(formData: FormData) {
 
 export async function importFromBusiness(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 
@@ -333,7 +333,7 @@ export async function importFromBusiness(formData: FormData) {
 
 export async function setAdImageAsCreative(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 

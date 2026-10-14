@@ -7,7 +7,7 @@ import { prisma } from "@/lib/db";
 
 export default async function NewArticlePage() {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
   const scope = await getPublicationScope(user);

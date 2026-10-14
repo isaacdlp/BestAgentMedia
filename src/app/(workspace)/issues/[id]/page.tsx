@@ -1,3 +1,4 @@
+import { UserRole } from "@prisma/client";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { updateIssueDetails } from "@/app/actions/content";
@@ -63,7 +64,7 @@ export default async function IssueDetailPage({
       select: { id: true, title: true, business: { select: { name: true } } },
     }),
   ]);
-  const canManage = user.role !== null;
+  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
   const design =
     typeof issue.designJson === "object" &&
     issue.designJson !== null &&
@@ -77,12 +78,25 @@ export default async function IssueDetailPage({
         <div>
           <Link className="text-link back-link" href="/issues">← All issues</Link>
           <p className="eyebrow">ISSUE · {issue.publication.name}</p>
-          <h1>Publication issue</h1>
+          <h1>{issue.name}</h1>
+          {issue.description ? <p className="muted">{issue.description}</p> : null}
           <p className="muted">Publication date: {issue.publicationDate.toISOString().slice(0, 10)}</p>
         </div>
         {canManage ? (
           <form action={updateIssueDetails} className="inline-edit issue-detail-form">
             <input name="id" type="hidden" value={issue.id} />
+            <label>
+              <span>Name</span>
+              <input defaultValue={issue.name} name="name" required type="text" />
+            </label>
+            <label>
+              <span>Slug</span>
+              <input defaultValue={issue.slug} name="slug" pattern="[a-z0-9]+(-[a-z0-9]+)*" required type="text" />
+            </label>
+            <label>
+              <span>Description</span>
+              <textarea defaultValue={issue.description ?? ""} name="description" rows={2} />
+            </label>
             <label>
               <span>Publication date</span>
               <input
@@ -97,7 +111,7 @@ export default async function IssueDetailPage({
               <option value="ACCEPTED">Accepted</option>
               <option value="PUBLISHED">Published</option>
             </select>
-            <button className="button button-small" type="submit">Save status</button>
+            <button className="button button-small" type="submit">Save details</button>
           </form>
         ) : null}
       </div>

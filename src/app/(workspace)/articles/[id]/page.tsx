@@ -51,7 +51,7 @@ export default async function ArticlePage({
   });
   if (!article) notFound();
 
-  const canEdit = user.role === UserRole.ADMIN || user.role === UserRole.PUBLISHER;
+  const canEdit = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
   const editorAgent = canEdit
     ? await prisma.agent.findUnique({ where: { slug: "editor" }, select: { id: true, enabled: true } })
     : null;
@@ -93,7 +93,6 @@ export default async function ArticlePage({
           {canEdit && editorAgent?.enabled ? (
             <ReviewButton
               apiPath={`/api/articles/${article.id}/review`}
-              agentPath={`/agents/${editorAgent.id}`}
             />
           ) : null}
           {canEdit ? (

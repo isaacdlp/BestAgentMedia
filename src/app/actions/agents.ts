@@ -20,6 +20,23 @@ export async function toggleAgent(formData: FormData) {
   revalidatePath(`/agents/${String(id)}`);
 }
 
+export async function updateAgentPersonaName(formData: FormData) {
+  const user = await requireUser();
+  if (user.role !== UserRole.ADMIN) redirect("/dashboard");
+
+  const id = Number(formData.get("id"));
+  if (!Number.isInteger(id) || id < 1) return;
+
+  const raw = formData.get("personaName");
+  if (typeof raw !== "string") return;
+  const personaName = raw.trim().slice(0, 100) || null;
+
+  await prisma.agent.update({ where: { id }, data: { personaName } });
+
+  revalidatePath("/agents");
+  revalidatePath(`/agents/${String(id)}`);
+}
+
 export async function updateAgentSettings(formData: FormData) {
   const user = await requireUser();
   if (user.role !== UserRole.ADMIN) redirect("/dashboard");

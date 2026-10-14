@@ -7,7 +7,7 @@ import { NewAdForm } from "./new-ad-form";
 
 export default async function NewAdPage() {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
 

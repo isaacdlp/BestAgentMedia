@@ -13,7 +13,7 @@ export default async function PublicationCoverPage({
   params: Promise<{ id: string }>;
 }) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) redirect("/dashboard");
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) redirect("/dashboard");
 
   const scope = await getPublicationScope(user);
   if (!scope) redirect("/dashboard");
@@ -75,10 +75,8 @@ export default async function PublicationCoverPage({
         </div>
         {canEdit && creativeAgent?.enabled ? (
           <EnhanceImageButton
-            agentPath={`/agents/${creativeAgent.id}`}
             imageId={pubIdStr}
             imageType="publication"
-            originalImageSrc={coverImageUrl}
             parentId={pubIdStr}
             label="Enhance cover"
           />

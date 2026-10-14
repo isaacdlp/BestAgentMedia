@@ -1,15 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { AgentTaskStatus, Prisma, UserRole } from "@prisma/client";
+import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getArticleScope } from "@/lib/access";
+import { launchAgentTask, step } from "@/lib/agent-task-runner";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
-type TaskStep = { at: string; level: "info" | "success" | "error"; message: string };
-
-function step(level: TaskStep["level"], message: string): TaskStep {
-  return { at: new Date().toISOString(), level, message };
-}
+export const maxDuration = 300;
 
 export async function POST(
   _request: Request,
@@ -19,7 +16,7 @@ export async function POST(
   if (!user) {
     return NextResponse.json({ error: "Sign in to request an editorial review." }, { status: 401 });
   }
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     return NextResponse.json({ error: "You cannot request editorial reviews." }, { status: 403 });
   }
 
@@ -67,36 +64,26 @@ export async function POST(
 
   const publicationNames = article.publications.map((p) => p.publication.name).join(", ") || "unspecified";
 
-  const task = await prisma.agentTask.create({
-    data: {
-      agentId: agent.id,
-      status: AgentTaskStatus.RUNNING,
-      label: `Editorial review · Article · ${article.title}`,
-      triggeredById: user.id,
-      startedAt: new Date(),
-      steps: [step("info", `Starting editorial review for article "${article.title}"`)] as unknown as Prisma.InputJsonValue,
-    },
-    select: { id: true },
-  });
-
-  const steps: TaskStep[] = [
-    step("info", `Agent settings: model=${model}, maxOutputTokens=${maxOutputTokens}`),
-    step("info", `Article: "${article.title}" · status: ${article.status} · publication(s): ${publicationNames}`),
-  ];
-
-  const client = new Anthropic({ apiKey });
-
-  try {
-    steps.push(step("info", `Calling ${model} for editorial analysis`));
-
-    const message = await client.messages.create({
-      model,
-      max_tokens: maxOutputTokens,
-      system: `You are an experienced editor for a local community publication. Review articles and return structured editorial feedback as JSON. Be constructive, specific, and practical. Focus on publication-ready quality.`,
-      messages: [
-        {
-          role: "user",
-          content: `Review this community publication article and return a JSON object with editorial feedback.
+  const task = await launchAgentTask({
+    agentId: agent.id,
+    label: `Editorial review · Article · ${article.title}`,
+    triggeredById: user.id,
+    steps: [
+      step("info", `Starting editorial review for article "${article.title}"`),
+      step("info", `Agent settings: model=${model}, maxOutputTokens=${maxOutputTokens}`),
+      step("info", `Article: "${article.title}" · status: ${article.status} · publication(s): ${publicationNames}`),
+    ],
+    work: async ({ log }) => {
+      log("info", `Calling ${model} for editorial analysis`);
+      const client = new Anthropic({ apiKey });
+      const message = await client.messages.create({
+        model,
+        max_tokens: maxOutputTokens,
+        system: `You are an experienced editor for a local community publication. Review articles and return structured editorial feedback as JSON. Be constructive, specific, and practical. Focus on publication-ready quality.`,
+        messages: [
+          {
+            role: "user",
+            content: `Review this community publication article and return a JSON object with editorial feedback.
 
 Publication(s): ${publicationNames}
 Title: ${article.title}
@@ -115,62 +102,42 @@ Return ONLY a valid JSON object — no markdown, no explanation, no code fences:
   "readabilityScore": <integer 1-10>,
   "communityRelevanceScore": <integer 1-10>
 }`,
-        },
-      ],
-    });
+          },
+        ],
+      });
 
-    const inputTokens = message.usage.input_tokens;
-    const outputTokens = message.usage.output_tokens;
-    steps.push(step("info", `Response received — input: ${inputTokens} tokens, output: ${outputTokens} tokens`));
+      const inputTokens = message.usage.input_tokens;
+      const outputTokens = message.usage.output_tokens;
+      log("info", `Response received — input: ${inputTokens} tokens, output: ${outputTokens} tokens`);
 
-    const textBlock = message.content.find((b) => b.type === "text");
-    if (!textBlock || textBlock.type !== "text") {
-      throw new Error("Model returned no text content");
-    }
+      const textBlock = message.content.find((b) => b.type === "text");
+      if (!textBlock || textBlock.type !== "text") {
+        throw new Error("Model returned no text content");
+      }
 
-    let raw = textBlock.text.trim();
-    if (raw.startsWith("```")) {
-      raw = raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
-    }
-    const feedback = JSON.parse(raw) as Record<string, unknown>;
-    steps.push(step("success", `Editorial review complete — readability: ${feedback.readabilityScore ?? "?"}/10, community relevance: ${feedback.communityRelevanceScore ?? "?"}/10`));
+      let raw = textBlock.text.trim();
+      if (raw.startsWith("```")) {
+        raw = raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
+      }
+      const feedback = JSON.parse(raw) as Record<string, unknown>;
+      log("success", `Editorial review complete — readability: ${feedback.readabilityScore ?? "?"}/10, community relevance: ${feedback.communityRelevanceScore ?? "?"}/10`);
 
-    await prisma.agentTask.update({
-      where: { id: task.id },
-      data: {
-        status: AgentTaskStatus.SUCCEEDED,
-        completedAt: new Date(),
-        steps: steps as unknown as Prisma.InputJsonValue,
-        result: {
-          contentType: "article",
-          referenceId: article.id,
-          referenceTitle: article.title,
-          headlineSuggestion: feedback.headlineSuggestion ?? null,
-          summary: feedback.summary ?? null,
-          strengths: feedback.strengths ?? [],
-          suggestions: feedback.suggestions ?? [],
-          missingElements: feedback.missingElements ?? [],
-          readabilityScore: feedback.readabilityScore ?? null,
-          communityRelevanceScore: feedback.communityRelevanceScore ?? null,
-          inputTokens,
-          outputTokens,
-        } as unknown as Prisma.InputJsonValue,
-      },
-    });
+      return {
+        contentType: "article",
+        referenceId: article.id,
+        referenceTitle: article.title,
+        headlineSuggestion: feedback.headlineSuggestion ?? null,
+        summary: feedback.summary ?? null,
+        strengths: feedback.strengths ?? [],
+        suggestions: feedback.suggestions ?? [],
+        missingElements: feedback.missingElements ?? [],
+        readabilityScore: feedback.readabilityScore ?? null,
+        communityRelevanceScore: feedback.communityRelevanceScore ?? null,
+        inputTokens,
+        outputTokens,
+      };
+    },
+  });
 
-    return NextResponse.json({ taskId: task.id });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    steps.push(step("error", `Review failed: ${message}`));
-    await prisma.agentTask.update({
-      where: { id: task.id },
-      data: {
-        status: AgentTaskStatus.FAILED,
-        error: message,
-        completedAt: new Date(),
-        steps: steps as unknown as Prisma.InputJsonValue,
-      },
-    });
-    return NextResponse.json({ error: `Editorial review failed: ${message}`, taskId: task.id }, { status: 502 });
-  }
+  return NextResponse.json({ task }, { status: 202 });
 }

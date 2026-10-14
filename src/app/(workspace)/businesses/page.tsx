@@ -2,9 +2,10 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import Link from "next/link";
-import { BusinessesSectionNav } from "@/components/businesses-section-nav";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListPagination } from "@/components/list-pagination";
+import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
+import { TaskAutoRefresh } from "@/components/task-auto-refresh";
 import { requireUser } from "@/lib/auth";
 import { getBusinessScope } from "@/lib/access";
 import { parseListParams } from "@/lib/list-params";
@@ -72,6 +73,7 @@ export default async function BusinessesPage({
 
   return (
     <>
+      <TaskAutoRefresh active={false} />
       <div className="page-heading">
         <div>
           <p className="eyebrow">BUSINESS DEVELOPMENT</p>
@@ -80,10 +82,11 @@ export default async function BusinessesPage({
         </div>
         <div className="page-heading-actions">
           <span className="role-pill">{total} businesses</span>
+          {isAdmin ? <Link className="button button-secondary" href="/businesses/import/new">Import</Link> : null}
+          {isAdmin ? <Link className="button button-secondary" href="/businesses/reachout/new">Outreach</Link> : null}
           {isAdmin ? <Link className="button button-primary" href="/businesses/new">Create business</Link> : null}
         </div>
       </div>
-      {isAdmin ? <BusinessesSectionNav current="businesses" /> : null}
       <section className="panel table-panel">
         <div className="panel-heading">
           <h2>All businesses <span className="count-badge">{total}</span></h2>
@@ -92,10 +95,16 @@ export default async function BusinessesPage({
           <ListToolbar sortOptions={SORT_OPTIONS} defaultSort="name" defaultOrder="asc" />
         </Suspense>
         {businesses.length ? (
+          <RecordDeleteScope
+            apiBase="/api/businesses"
+            bulk={user.role === UserRole.ADMIN}
+            ids={businesses.map((business) => business.id)}
+            noun="business"
+          >
           <div className="table-wrap">
             <table>
               <thead>
-                <tr>
+                <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} />
                   <th>Business</th>
                   <th>Category</th>
                   <th>Location</th>
@@ -107,6 +116,7 @@ export default async function BusinessesPage({
               <tbody>
                 {businesses.map((business) => (
                   <tr key={business.id}>
+                    <RecordSelectCell id={business.id} label={business.name} />
                     <td className="table-primary">
                       <Link className="text-link" href={`/businesses/${business.id}`}>
                         {business.name}
@@ -127,11 +137,12 @@ export default async function BusinessesPage({
                         <a className="text-link" href={business.website} rel="noreferrer" target="_blank">Visit website</a>
                       ) : "—"}
                     </td>
-                  </tr>
+</tr>
                 ))}
               </tbody>
             </table>
           </div>
+          </RecordDeleteScope>
         ) : (
           <div className="empty-state">{q ? `No businesses match "${q}".` : "No businesses yet."}</div>
         )}

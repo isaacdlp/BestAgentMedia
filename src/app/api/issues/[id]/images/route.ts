@@ -14,6 +14,8 @@ const supportedImageFormats = {
   jpeg: { extension: "jpg", mimeType: "image/jpeg" },
   png: { extension: "png", mimeType: "image/png" },
   webp: { extension: "webp", mimeType: "image/webp" },
+  // Served with a sandboxing Content-Security-Policy so scripts in an SVG never run.
+  svg: { extension: "svg", mimeType: "image/svg+xml" },
 } as const;
 
 export async function POST(
@@ -24,7 +26,7 @@ export async function POST(
   if (!user) {
     return NextResponse.json({ error: "Sign in to add images." }, { status: 401 });
   }
-  if (user.role !== "ADMIN" && user.role !== "PUBLISHER") {
+  if (user.role !== "ADMIN" && user.role !== "EDITOR") {
     return NextResponse.json({ error: "You cannot edit issue layouts." }, { status: 403 });
   }
 
@@ -75,7 +77,7 @@ export async function POST(
     return NextResponse.json({ error: "The selected file could not be decoded as an image." }, { status: 400 });
   }
   if (!format || file.type !== format.mimeType) {
-    return NextResponse.json({ error: "Upload a valid JPEG, PNG, or WebP image." }, { status: 400 });
+    return NextResponse.json({ error: "Upload a valid JPEG, PNG, WebP, or SVG image." }, { status: 400 });
   }
 
   const fileName = `${randomUUID()}.${format.extension}`;

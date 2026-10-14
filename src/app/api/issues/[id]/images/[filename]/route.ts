@@ -9,6 +9,7 @@ const mediaTypes: Record<string, string> = {
   jpg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
+  svg: "image/svg+xml",
 };
 
 export async function GET(
@@ -23,7 +24,7 @@ export async function GET(
   const { id, filename } = await params;
   if (
     !/^[\w-]{1,64}$/.test(id) ||
-    !/^[0-9a-f-]{36}\.(?:jpg|png|webp)$/i.test(filename)
+    !/^[0-9a-f-]{36}\.(?:jpg|png|webp|svg)$/i.test(filename)
   ) {
     return NextResponse.json({ error: "Image not found." }, { status: 404 });
   }
@@ -54,6 +55,8 @@ export async function GET(
       "Cache-Control": "private, no-store",
       "Content-Length": String(image.byteLength),
       "Content-Type": mediaTypes[filename.split(".").pop()!.toLowerCase()],
+      // Uploaded SVGs are untrusted markup; never let them run scripts if opened directly.
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       "X-Content-Type-Options": "nosniff",
     },
   });

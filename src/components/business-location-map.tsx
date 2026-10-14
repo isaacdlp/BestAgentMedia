@@ -32,7 +32,7 @@ export function BusinessLocationMap({
         className="business-map"
         key={mapKey}
         loading="lazy"
-        referrerPolicy="no-referrer"
+        referrerPolicy="strict-origin-when-cross-origin"
         src={mapUrl}
         title={`Map showing ${businessName} at ${latitude}, ${longitude}`}
       />

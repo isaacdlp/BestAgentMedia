@@ -44,7 +44,7 @@ export default async function AdDetailPage({
   ]);
   if (!ad) notFound();
 
-  const canEdit = user.role === UserRole.ADMIN || user.role === UserRole.PUBLISHER;
+  const canEdit = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
 
   const allPublications = canEdit
     ? user.role === UserRole.ADMIN
@@ -183,7 +183,6 @@ export default async function AdDetailPage({
                         <tr key={img.id}>
                           <td>
                             <Link href={`/ads/${ad.id}/images/${img.id}`}>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={`/api/ads/${ad.id}/images/${img.id}`}
                                 alt={img.originalName}

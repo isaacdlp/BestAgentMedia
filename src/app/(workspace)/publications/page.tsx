@@ -6,6 +6,7 @@ import { getPublicationScope } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListPagination } from "@/components/list-pagination";
+import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
 
@@ -19,7 +20,7 @@ export default async function PublicationsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) redirect("/dashboard");
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) redirect("/dashboard");
 
   const baseWhere = await getPublicationScope(user);
   if (!baseWhere) redirect("/dashboard");
@@ -41,7 +42,7 @@ export default async function PublicationsPage({
       select: {
         id: true,
         name: true,
-        zipCodes: { select: { code: true }, orderBy: { code: "asc" } },
+        zipCodes: { select: { estimatedPopulation: true, areaSquareMiles: true } },
         _count: { select: { submissions: true, advertisements: true } },
       },
     }),
@@ -65,25 +66,35 @@ export default async function PublicationsPage({
           <ListToolbar sortOptions={SORT_OPTIONS} defaultSort="name" defaultOrder="asc" />
         </Suspense>
         {publications.length ? (
+          <RecordDeleteScope
+            apiBase="/api/publications"
+            bulk={user.role === UserRole.ADMIN}
+            ids={publications.map((publication) => publication.id)}
+            noun="publication"
+          >
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Publication</th><th>ZIP codes</th><th>Submissions</th><th>Ads</th></tr>
+                <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Publication</th><th>Zip Count</th><th>Distribution</th><th>Area</th><th>Submissions</th><th>Ads</th></tr>
               </thead>
               <tbody>
                 {publications.map((publication) => (
                   <tr key={publication.id}>
+                    <RecordSelectCell id={publication.id} label={publication.name} />
                     <td className="table-primary">
                       <Link className="text-link" href={`/publications/${publication.id}`}>{publication.name}</Link>
                     </td>
-                    <td>{publication.zipCodes.map(({ code }) => code).join(", ") || "—"}</td>
+                    <td>{publication.zipCodes.length}</td>
+                    <td>{formatPopulation(publication.zipCodes)}</td>
+                    <td>{formatArea(publication.zipCodes)}</td>
                     <td>{publication._count.submissions}</td>
                     <td>{publication._count.advertisements}</td>
-                  </tr>
+</tr>
                 ))}
               </tbody>
             </table>
           </div>
+          </RecordDeleteScope>
         ) : (
           <div className="empty-state">{q ? `No publications match "${q}".` : "No publications are assigned to this workspace yet."}</div>
         )}
@@ -93,4 +104,18 @@ export default async function PublicationsPage({
       </section>
     </>
   );
+}
+
+type ZipMetrics = { estimatedPopulation: number | null; areaSquareMiles: number | null };
+
+function formatPopulation(zipCodes: ZipMetrics[]) {
+  if (!zipCodes.length) return "—";
+  const total = zipCodes.reduce((sum, zip) => sum + (zip.estimatedPopulation ?? 0), 0);
+  return total.toLocaleString("en-US");
+}
+
+function formatArea(zipCodes: ZipMetrics[]) {
+  if (!zipCodes.length) return "—";
+  const total = zipCodes.reduce((sum, zip) => sum + (zip.areaSquareMiles ?? 0), 0);
+  return `${total.toLocaleString("en-US", { maximumFractionDigits: 1 })} sq mi`;
 }

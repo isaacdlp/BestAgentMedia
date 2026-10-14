@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PublicSubmissionForm } from "@/components/public-submission-form";
+import { TaskNotifier } from "@/components/task-notifier";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { getCurrentUser } from "@/lib/auth";
+import { countActiveTasks } from "@/lib/tasks";
 
 export const metadata: Metadata = {
   title: "Submit a Story | BestAgentMedia",
@@ -67,7 +69,8 @@ export default async function SubmitContentPage({
   if (user) {
     return (
       <div className="app-shell">
-        <WorkspaceSidebar role={user.role} />
+        <WorkspaceSidebar activeTaskCount={await countActiveTasks(user.id)} role={user.role} />
+        <TaskNotifier />
         <div className="main-column">
           <main className="public-submission-page">{submissionContent}</main>
         </div>

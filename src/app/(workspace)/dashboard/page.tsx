@@ -10,7 +10,7 @@ import { prisma } from "@/lib/db";
 
 const roleDescriptions: Record<UserRole, string> = {
   ADMIN: "A complete view of your publications, content, and advertising.",
-  PUBLISHER: "Manage submissions and ads across your assigned publications.",
+  EDITOR: "Manage submissions and ads across your assigned publications.",
   CONTRIBUTOR: "Follow the progress of your content submissions.",
 };
 

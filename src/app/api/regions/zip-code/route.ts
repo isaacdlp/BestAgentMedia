@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -100,13 +100,23 @@ export async function GET(request: Request) {
       zipCodes: { some: { code: feature.properties.code } },
     },
     orderBy: { name: "asc" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, coverImagePath: true },
   });
 
   return NextResponse.json({
     feature,
-    publications,
+    publications: publications.map(({ coverImagePath, ...publication }) => ({
+      ...publication,
+      coverImageUrl: getCoverImageUrl(coverImagePath),
+    })),
   });
+}
+
+function getCoverImageUrl(coverImagePath: string | null) {
+  const fileName = coverImagePath?.match(
+    /^media\/publications\/([a-z0-9-]+\.(?:png|jpe?g))$/i,
+  )?.[1];
+  return fileName ? `/media/publications/${encodeURIComponent(fileName)}` : null;
 }
 
 async function findNearestZipCandidates(

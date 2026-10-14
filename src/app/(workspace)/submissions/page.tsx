@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { getSubmissionScope } from "@/lib/access";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListPagination } from "@/components/list-pagination";
+import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
 
@@ -62,7 +63,7 @@ export default async function SubmissionsPage({
     }),
     prisma.contentSubmission.count({ where }),
   ]);
-  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.PUBLISHER;
+  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
 
   return (
     <>
@@ -82,14 +83,21 @@ export default async function SubmissionsPage({
           <ListToolbar sortOptions={SORT_OPTIONS} defaultSort="updatedAt" defaultOrder="desc" />
         </Suspense>
         {submissions.length ? (
+          <RecordDeleteScope
+            apiBase="/api/submissions"
+            bulk={user.role === UserRole.ADMIN}
+            ids={submissions.map((submission) => submission.id)}
+            noun="submission"
+          >
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Story</th><th>Publication</th><th>Submitted by</th><th>Status</th><th>Updated</th>{canManage ? <th>Review</th> : null}</tr>
+                <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Story</th><th>Publication</th><th>Submitted by</th><th>Status</th><th>Updated</th>{canManage ? <th>Review</th> : null}</tr>
               </thead>
               <tbody>
                 {submissions.map((submission) => (
                   <tr key={submission.id}>
+                    <RecordSelectCell id={submission.id} label={submission.title} />
                     <td className="table-primary">
                       <Link className="text-link" href={`/submissions/${submission.id}`}>{submission.title}</Link>
                     </td>
@@ -112,11 +120,12 @@ export default async function SubmissionsPage({
                         </form>
                       </td>
                     ) : null}
-                  </tr>
+</tr>
                 ))}
               </tbody>
             </table>
           </div>
+          </RecordDeleteScope>
         ) : (
           <div className="empty-state">{q ? `No submissions match "${q}".` : "No content submissions are available yet."}</div>
         )}

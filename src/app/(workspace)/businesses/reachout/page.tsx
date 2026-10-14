@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import Link from "next/link";
-import { BusinessesSectionNav } from "@/components/businesses-section-nav";
 import { ReachoutTaskList } from "@/components/reachout-task-list";
 import type { ReachoutTaskSummary } from "@/components/reachout-task-list";
 import { requireUser } from "@/lib/auth";
@@ -47,7 +46,6 @@ export default async function ReachoutPage() {
           New onboarding task
         </Link>
       </div>
-      <BusinessesSectionNav current="reachout" />
       <ReachoutTaskList initialTasks={initialTasks} initialTotal={initialTotal} />
     </>
   );

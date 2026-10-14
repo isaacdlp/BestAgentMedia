@@ -5,6 +5,7 @@ import { getArticleScope } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListPagination } from "@/components/list-pagination";
+import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
 
@@ -53,7 +54,7 @@ export default async function ArticlesPage({
     }),
     prisma.article.count({ where }),
   ]);
-  const canCreate = user.role === UserRole.ADMIN || user.role === UserRole.PUBLISHER;
+  const canCreate = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
 
   return (
     <>
@@ -73,12 +74,19 @@ export default async function ArticlesPage({
           <ListToolbar sortOptions={SORT_OPTIONS} defaultSort="updatedAt" defaultOrder="desc" />
         </Suspense>
         {articles.length ? (
+          <RecordDeleteScope
+            apiBase="/api/articles"
+            bulk={user.role === UserRole.ADMIN}
+            ids={articles.map((article) => article.id)}
+            noun="article"
+          >
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Article</th><th>Publication(s)</th><th>Status</th><th>Images</th><th>Issue placements</th><th>Updated</th></tr></thead>
+              <thead><tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Article</th><th>Publication(s)</th><th>Status</th><th>Images</th><th>Issue placements</th><th>Updated</th></tr></thead>
               <tbody>
                 {articles.map((article) => (
                   <tr key={article.id}>
+                    <RecordSelectCell id={article.id} label={article.title} />
                     <td className="table-primary">
                       <Link className="text-link" href={`/articles/${article.id}`}>{article.title}</Link>
                       {article.sourceSubmission ? <span className="article-origin">From submission</span> : null}
@@ -88,11 +96,12 @@ export default async function ArticlesPage({
                     <td>{article._count.images}</td>
                     <td>{article._count.placements}</td>
                     <td>{article.updatedAt.toLocaleDateString()}</td>
-                  </tr>
+</tr>
                 ))}
               </tbody>
             </table>
           </div>
+          </RecordDeleteScope>
         ) : (
           <div className="empty-state">{q ? `No articles match "${q}".` : "No articles are available yet. Accept a submission and push it to Articles, or create an article from scratch."}</div>
         )}

@@ -1,36 +1,21 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import { AgentTaskStatus, Prisma, UserRole } from "@prisma/client";
+import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getArticleScope, getIssueScope } from "@/lib/access";
+import { launchAgentTask, step } from "@/lib/agent-task-runner";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { sanitizeLayoutDesign } from "@/lib/issue-design";
 
-type TaskStep = { at: string; level: "info" | "success" | "error"; message: string };
+export const maxDuration = 300;
 
-function step(level: TaskStep["level"], message: string): TaskStep {
-  return { at: new Date().toISOString(), level, message };
-}
-
-const VALID_ELEMENT_TYPES = new Set(["text", "image", "svg", "figure", "video", "line", "group"]);
-function sanitizeDesign(design: Record<string, unknown>): Record<string, unknown> {
-  const pages = Array.isArray(design.pages) ? design.pages : [];
-  return {
-    ...design,
-    pages: (pages as Record<string, unknown>[]).map((page) => ({
-      ...page,
-      children: Array.isArray(page.children)
-        ? (page.children as unknown[]).filter((el) => {
-            if (typeof el !== "object" || el === null) return false;
-            const t = (el as Record<string, unknown>).type;
-            return typeof t === "string" && VALID_ELEMENT_TYPES.has(t);
-          })
-        : [],
-    })),
-  };
-}
-
+/**
+ * Launches a Designer task that generates a layout for the issue. The generated layout is
+ * stored on the task for review; it is applied to the issue only when a person chooses
+ * "Apply to issue" on the task page.
+ */
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -39,7 +24,7 @@ export async function POST(
   if (!user) {
     return NextResponse.json({ error: "Sign in to generate a layout." }, { status: 401 });
   }
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     return NextResponse.json({ error: "You cannot generate issue layouts." }, { status: 403 });
   }
 
@@ -73,6 +58,7 @@ export async function POST(
     where: { id, ...issueScope },
     select: {
       id: true,
+      name: true,
       publicationId: true,
       publicationDate: true,
       publication: { select: { id: true, name: true, coverImagePath: true } },
@@ -91,97 +77,90 @@ export async function POST(
     return NextResponse.json({ error: "AI layout generation is not configured (missing CLAUDE_KEY)." }, { status: 503 });
   }
 
-  // Create the task record
-  const task = await prisma.agentTask.create({
-    data: {
-      agentId: agent.id,
-      status: AgentTaskStatus.RUNNING,
-      label: `Generate layout · ${issue.publication.name} · ${issue.publicationDate.toISOString().slice(0, 7)}`,
-      issueId: issue.id,
-      triggeredById: user.id,
-      startedAt: new Date(),
-      steps: [step("info", `Starting: Generate layout for "${issue.publication.name}" (${issue.publicationDate.toISOString().slice(0, 10)})`)] as unknown as Prisma.InputJsonValue,
-    },
-    select: { id: true },
-  });
-
-  const steps: TaskStep[] = [
-    step("info", `Agent settings: model=${model}, maxOutputTokens=${maxOutputTokens}`),
-  ];
-
-  // Fetch articles and ads
   const articleScope = await getArticleScope(user);
-  const [articles, advertisements] = await Promise.all([
-    prisma.article.findMany({
-      where: {
-        AND: [
-          articleScope,
-          { publications: { some: { publicationId: issue.publicationId } } },
-        ],
-      },
-      orderBy: { title: "asc" },
-      select: {
-        id: true,
-        title: true,
-        body: true,
-        images: { orderBy: { position: "asc" }, select: { id: true } },
-      },
-    }),
-    prisma.advertisement.findMany({
-      where: {
-        publications: { some: { publicationId: issue.publicationId } },
-        status: { not: "DECLINED" },
-      },
-      orderBy: { title: "asc" },
-      select: { id: true, title: true, business: { select: { name: true } } },
-    }),
-  ]);
-  steps.push(step("info", `Fetched ${articles.length} article(s) and ${advertisements.length} advertisement(s) for "${issue.publication.name}"`));
 
-  // Load publication cover image
-  let coverImageBase64: string | null = null;
-  let coverMimeType: "image/png" | "image/jpeg" = "image/jpeg";
-  const coverPath = issue.publication.coverImagePath;
-  if (coverPath) {
-    const filename = coverPath.match(/^media\/publications\/([a-z0-9-]+\.(?:png|jpe?g))$/i)?.[1];
-    if (filename) {
-      try {
-        const imageBuffer = await readFile(resolve(process.cwd(), "media", "publications", filename));
-        coverImageBase64 = imageBuffer.toString("base64");
-        coverMimeType = filename.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
-        steps.push(step("info", `Loaded cover image "${filename}" (${Math.round(imageBuffer.byteLength / 1024)} KB) for visual style guidance`));
-      } catch {
-        steps.push(step("info", "Cover image file not found on disk — proceeding without visual style reference"));
+  const task = await launchAgentTask({
+    agentId: agent.id,
+    label: `Generate layout · ${issue.name}`,
+    triggeredById: user.id,
+    issueId: issue.id,
+    steps: [
+      step("info", `Starting: Generate layout for "${issue.publication.name}" (${issue.publicationDate.toISOString().slice(0, 10)})`),
+      step("info", `Agent settings: model=${model}, maxOutputTokens=${maxOutputTokens}`),
+    ],
+    work: async ({ log }) => {
+      // Fetch articles and ads
+      const [articles, advertisements] = await Promise.all([
+        prisma.article.findMany({
+          where: {
+            AND: [
+              articleScope,
+              { publications: { some: { publicationId: issue.publicationId } } },
+            ],
+          },
+          orderBy: { title: "asc" },
+          select: {
+            id: true,
+            title: true,
+            body: true,
+            images: { orderBy: { position: "asc" }, select: { id: true } },
+          },
+        }),
+        prisma.advertisement.findMany({
+          where: {
+            publications: { some: { publicationId: issue.publicationId } },
+            status: { not: "DECLINED" },
+          },
+          orderBy: { title: "asc" },
+          select: { id: true, title: true, business: { select: { name: true } } },
+        }),
+      ]);
+      log("info", `Fetched ${articles.length} article(s) and ${advertisements.length} advertisement(s) for "${issue.publication.name}"`);
+
+      // Load publication cover image
+      let coverImageBase64: string | null = null;
+      let coverMimeType: "image/png" | "image/jpeg" = "image/jpeg";
+      const coverPath = issue.publication.coverImagePath;
+      if (coverPath) {
+        const filename = coverPath.match(/^media\/publications\/([a-z0-9-]+\.(?:png|jpe?g))$/i)?.[1];
+        if (filename) {
+          try {
+            const imageBuffer = await readFile(resolve(process.cwd(), "media", "publications", filename));
+            coverImageBase64 = imageBuffer.toString("base64");
+            coverMimeType = filename.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+            log("info", `Loaded cover image "${filename}" (${Math.round(imageBuffer.byteLength / 1024)} KB) for visual style guidance`);
+          } catch {
+            log("info", "Cover image file not found on disk — proceeding without visual style reference");
+          }
+        } else {
+          log("info", "Cover image path format unrecognised — proceeding without visual style reference");
+        }
+      } else {
+        log("info", "No cover image configured for this publication");
       }
-    } else {
-      steps.push(step("info", "Cover image path format unrecognised — proceeding without visual style reference"));
-    }
-  } else {
-    steps.push(step("info", "No cover image configured for this publication"));
-  }
 
-  // Build AI prompt
-  const pages = issue.pages.map((p) => ({ id: p.id, type: p.type, number: p.pageNumber }));
-  const articleData = articles.map((a) => ({
-    id: a.id,
-    title: a.title,
-    bodyPreview: a.body.slice(0, 300),
-    imageUrl: a.images[0] ? `/api/articles/${a.id}/images/${a.images[0].id}` : null,
-  }));
-  const adData = advertisements.map((ad) => ({
-    id: ad.id,
-    title: ad.title,
-    businessName: ad.business.name,
-  }));
+      // Build AI prompt
+      const pages = issue.pages.map((p) => ({ id: p.id, type: p.type, number: p.pageNumber }));
+      const articleData = articles.map((a) => ({
+        id: a.id,
+        title: a.title,
+        bodyPreview: a.body.slice(0, 300),
+        imageUrl: a.images[0] ? `/api/articles/${a.id}/images/${a.images[0].id}` : null,
+      }));
+      const adData = advertisements.map((ad) => ({
+        id: ad.id,
+        title: ad.title,
+        businessName: ad.business.name,
+      }));
 
-  const userContent: Anthropic.MessageParam["content"] = [];
-  if (coverImageBase64) {
-    userContent.push({ type: "text", text: `Here is the cover of "${issue.publication.name}" for visual style reference:` });
-    userContent.push({ type: "image", source: { type: "base64", media_type: coverMimeType, data: coverImageBase64 } });
-  }
-  userContent.push({
-    type: "text",
-    text: `Generate a professional Polotno layout design for a "${issue.publication.name}" issue (date: ${issue.publicationDate.toISOString().slice(0, 10)}).
+      const userContent: Anthropic.MessageParam["content"] = [];
+      if (coverImageBase64) {
+        userContent.push({ type: "text", text: `Here is the cover of "${issue.publication.name}" for visual style reference:` });
+        userContent.push({ type: "image", source: { type: "base64", media_type: coverMimeType, data: coverImageBase64 } });
+      }
+      userContent.push({
+        type: "text",
+        text: `Generate a professional page layout specification for a "${issue.publication.name}" issue (date: ${issue.publicationDate.toISOString().slice(0, 10)}).
 
 Pages (use EXACT ids):
 ${JSON.stringify(pages, null, 2)}
@@ -194,7 +173,7 @@ ${JSON.stringify(adData, null, 2)}
 
 Return ONLY a valid JSON object — no markdown, no explanation, no code fences.
 
-IMPORTANT — valid Polotno page structure:
+IMPORTANT — valid layout structure (sizes and coordinates in pixels):
 {
   "width": 816,
   "height": 1056,
@@ -247,88 +226,51 @@ Layout rules:
 8. All coordinates within 0–816 (x) and 0–1056 (y); text margins ≥ 40px from page edges
 9. Titles 28-48px bold, subheads 18-24px, body 13-16px, use light text on dark backgrounds
 10. Return ONLY the JSON — nothing else`,
-  });
+      });
 
-  steps.push(step("info", `Calling ${model} with adaptive thinking (maxOutputTokens: ${maxOutputTokens})`));
+      log("info", `Calling ${model} with adaptive thinking (maxOutputTokens: ${maxOutputTokens})`);
 
-  const client = new Anthropic({ apiKey });
-  let design: unknown;
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let thinkingTokens = 0;
+      const client = new Anthropic({ apiKey });
+      const stream = client.messages.stream({
+        model,
+        max_tokens: maxOutputTokens,
+        thinking: { type: "adaptive" },
+        system: "You are a professional publication layout designer generating page layout JSON for a design editor. Return ONLY valid JSON — no markdown code fences, no explanation. Page backgrounds use the \"background\" property. Child elements use ONLY type \"text\" or type \"image\" — never \"rect\", \"shape\", \"circle\", \"figure\", \"line\", or any other type.",
+        messages: [{ role: "user", content: userContent }],
+      });
+      const message = await stream.finalMessage();
 
-  try {
-    const stream = await client.messages.stream({
-      model,
-      max_tokens: maxOutputTokens,
-      thinking: { type: "adaptive" },
-      system: "You are a professional publication layout designer generating Polotno canvas JSON. Return ONLY valid JSON — no markdown code fences, no explanation. Page backgrounds use the \"background\" property. Child elements use ONLY type \"text\" or type \"image\" — never \"rect\", \"shape\", \"circle\", \"figure\", \"line\", or any other type.",
-      messages: [{ role: "user", content: userContent }],
-    });
-    const message = await stream.finalMessage();
+      const inputTokens = message.usage.input_tokens;
+      const outputTokens = message.usage.output_tokens;
+      const thinkingBlock = message.content.find((b) => b.type === "thinking");
+      const thinkingTokens = thinkingBlock && thinkingBlock.type === "thinking" ? thinkingBlock.thinking?.length ?? 0 : 0;
+      log("info", `Response received — input: ${inputTokens} tokens, output: ${outputTokens} tokens`);
 
-    inputTokens = message.usage.input_tokens;
-    outputTokens = message.usage.output_tokens;
-    const thinkingBlock = message.content.find((b) => b.type === "thinking");
-    if (thinkingBlock && thinkingBlock.type === "thinking") {
-      thinkingTokens = thinkingBlock.thinking?.length ?? 0;
-    }
-    steps.push(step("info", `Response received — input: ${inputTokens} tokens, output: ${outputTokens} tokens`));
+      const textBlock = message.content.find((b) => b.type === "text");
+      if (!textBlock || textBlock.type !== "text") {
+        throw new Error("Model returned no text content");
+      }
 
-    const textBlock = message.content.find((b) => b.type === "text");
-    if (!textBlock || textBlock.type !== "text") {
-      throw new Error("Model returned no text content");
-    }
+      let raw = textBlock.text.trim();
+      if (raw.startsWith("```")) {
+        raw = raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
+      }
+      const design = sanitizeLayoutDesign(JSON.parse(raw) as Record<string, unknown>);
 
-    let raw = textBlock.text.trim();
-    if (raw.startsWith("```")) {
-      raw = raw.replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
-    }
-    design = sanitizeDesign(JSON.parse(raw) as Record<string, unknown>);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    steps.push(step("error", `Generation failed: ${message}`));
-    await prisma.agentTask.update({
-      where: { id: task.id },
-      data: {
-        status: AgentTaskStatus.FAILED,
-        error: message,
-        completedAt: new Date(),
-        steps: steps as unknown as Prisma.InputJsonValue,
-      },
-    });
-    return NextResponse.json({ error: `Layout generation failed: ${message}`, taskId: task.id }, { status: 502 });
-  }
+      // Count elements across all pages
+      const designPages = Array.isArray(design.pages) ? (design.pages as unknown[]) : [];
+      const pageCount = designPages.length;
+      const elementCount = designPages.reduce<number>((sum, p) => {
+        const children = (p as Record<string, unknown>).children;
+        return sum + (Array.isArray(children) ? children.length : 0);
+      }, 0);
 
-  // Count elements across all pages
-  const designPages = Array.isArray((design as Record<string, unknown>).pages)
-    ? ((design as Record<string, unknown>).pages as unknown[])
-    : [];
-  const pageCount = designPages.length;
-  const elementCount = designPages.reduce<number>((sum, p) => {
-    const children = (p as Record<string, unknown>).children;
-    return sum + (Array.isArray(children) ? children.length : 0);
-  }, 0);
+      log("success", `Layout generated: ${pageCount} pages, ${elementCount} elements total (thinking: ${thinkingTokens} chars)`);
+      log("info", "Layout stored on this task for review — apply it to the issue from the task page");
 
-  steps.push(step("success", `Layout generated: ${pageCount} pages, ${elementCount} elements total (thinking: ${thinkingTokens} chars)`));
-
-  // Auto-save the design to the issue so it is not lost if the user navigates away
-  await prisma.issue.update({
-    where: { id: issue.id },
-    data: { designJson: design as Prisma.InputJsonValue },
-  });
-  steps.push(step("info", "Design saved to issue draft"));
-
-  await prisma.agentTask.update({
-    where: { id: task.id },
-    data: {
-      status: AgentTaskStatus.SUCCEEDED,
-      completedAt: new Date(),
-      steps: steps as unknown as Prisma.InputJsonValue,
-      // Store the design so it can be redeployed from the Agents page
-      result: { pageCount, elementCount, inputTokens, outputTokens, thinkingTokens, design } as unknown as Prisma.InputJsonValue,
+      return { pageCount, elementCount, inputTokens, outputTokens, thinkingTokens, design };
     },
   });
 
-  return NextResponse.json({ design, taskId: task.id });
+  return NextResponse.json({ task }, { status: 202 });
 }

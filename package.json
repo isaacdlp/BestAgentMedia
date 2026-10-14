@@ -10,7 +10,7 @@
     "db:generate": "prisma generate",
     "db:refresh-census-seed": "tsx prisma/refresh-census-seed.ts",
     "db:migrate": "prisma migrate dev",
-    "db:deploy": "prisma migrate deploy && tsx prisma/deploy-publications.ts",
+    "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio"
   },
@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
+    "@cesdk/cesdk-js": "1.83.0",
     "@prisma/client": "6.12.0",
     "bcryptjs": "^3.0.2",
     "imapflow": "^2.4.0",
@@ -27,7 +28,6 @@
     "mailparser": "^3.9.38",
     "next": "^16.4.0",
     "nodemailer": "^10.1.0",
-    "polotno": "^4.0.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-leaflet": "^5.0.0",

@@ -1,39 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useTaskLauncher } from "@/components/use-task-launcher";
 
 type PitchType = "sponsored_article" | "advertisement";
 
-export function PitchButton({
-  businessId,
-  agentPath,
-}: {
-  businessId: number;
-  agentPath: string;
-}) {
-  const router = useRouter();
+/** Launches a Marketer Task that drafts a pitch email for review (nothing is sent). */
+export function PitchButton({ businessId }: { businessId: number }) {
   const [pitchType, setPitchType] = useState<PitchType>("sponsored_article");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  async function handlePitch() {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch(`/api/businesses/${businessId}/pitch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pitchType }),
-      });
-      const result = (await response.json()) as { taskId?: string; error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Pitch failed.");
-      router.push(agentPath);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Pitch failed.");
-      setLoading(false);
-    }
-  }
+  const { launch, starting, error } = useTaskLauncher();
 
   return (
     <div className="pitch-button-wrap">
@@ -42,7 +17,7 @@ export function PitchButton({
         <select
           aria-label="Pitch type"
           className="pitch-type-select"
-          disabled={loading}
+          disabled={starting}
           onChange={(e) => setPitchType(e.target.value as PitchType)}
           value={pitchType}
         >
@@ -51,11 +26,11 @@ export function PitchButton({
         </select>
         <button
           className="button button-secondary"
-          disabled={loading}
-          onClick={() => void handlePitch()}
+          disabled={starting}
+          onClick={() => void launch(`/api/businesses/${businessId}/pitch`, { pitchType })}
           type="button"
         >
-          {loading ? "Drafting…" : "Pitch"}
+          {starting ? "Starting…" : "Pitch"}
         </button>
       </div>
     </div>

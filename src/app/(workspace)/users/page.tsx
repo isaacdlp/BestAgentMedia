@@ -5,6 +5,7 @@ import { UserRole } from "@prisma/client";
 import { requireUser } from "@/lib/auth";
 import { ListToolbar } from "@/components/list-toolbar";
 import { ListPagination } from "@/components/list-pagination";
+import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
 
@@ -17,7 +18,7 @@ const SORT_OPTIONS = [
 
 const roleLabels: Record<UserRole, string> = {
   ADMIN: "Administrator",
-  PUBLISHER: "Publisher",
+  EDITOR: "Editor",
   CONTRIBUTOR: "Contributor",
 };
 
@@ -85,12 +86,17 @@ export default async function UsersPage({
           <ListToolbar sortOptions={SORT_OPTIONS} defaultSort="name" defaultOrder="asc" />
         </Suspense>
         {users.length ? (
+          <RecordDeleteScope
+            apiBase="/api/users"
+            bulk={user.role === UserRole.ADMIN}
+            ids={users.map((account) => account.id)}
+            noun="user"
+          >
           <div className="table-wrap">
             <table>
               <thead>
-                <tr>
+                <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} />
                   <th>Name</th>
-                  <th>Surname</th>
                   <th>Email</th>
                   <th>Role</th>
                   <th>Status</th>
@@ -100,21 +106,22 @@ export default async function UsersPage({
               <tbody>
                 {users.map((account) => (
                   <tr key={account.id}>
+                    <RecordSelectCell id={account.id} label={[account.name, account.surname].filter(Boolean).join(" ")} />
                     <td className="table-primary">
                       <Link className="text-link" href={`/users/${account.id}`}>
-                        {account.name}
+                        {[account.name, account.surname].filter(Boolean).join(" ")}
                       </Link>
                     </td>
-                    <td>{account.surname}</td>
                     <td><a className="text-link" href={`mailto:${account.email}`}>{account.email}</a></td>
                     <td>{account.role ? roleLabels[account.role] : "Contributor"}</td>
                     <td><span className="status-pill">{account.active ? "Active" : "Inactive"}</span></td>
                     <td>{account.createdAt.toLocaleDateString()}</td>
-                  </tr>
+</tr>
                 ))}
               </tbody>
             </table>
           </div>
+          </RecordDeleteScope>
         ) : (
           <div className="empty-state">{q ? `No users match "${q}".` : "No users have been added yet."}</div>
         )}

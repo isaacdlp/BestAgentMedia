@@ -31,6 +31,9 @@ export type PublicationMapData = {
   type: "FeatureCollection";
   features: PublicationZipFeature[];
   bounds: [[south: number, west: number], [north: number, east: number]];
+  // ZIP codes left off the map: malformed, or without a valid Census boundary
+  // (e.g. PO-box-only ZIPs).
+  unmappedCodes: string[];
 };
 
 export function findContainingZipCode(
@@ -69,15 +72,26 @@ export function geometryContainsCoordinate(
 export function buildPublicationMapData(
   zipCodes: ZipCodeBoundary[],
 ): PublicationMapData {
-  if (zipCodes.some(({ code }) => !/^\d{5}$/.test(code))) {
-    throw new Error("Publication ZIP codes must be five-digit numeric codes.");
+  // Skip ZIPs with a malformed code or a missing/invalid boundary rather than
+  // failing the whole map.
+  const features: PublicationZipFeature[] = [];
+  const unmappedCodes: string[] = [];
+  for (const { code, boundaryGeometry } of zipCodes) {
+    if (!/^\d{5}$/.test(code) || boundaryGeometry == null) {
+      unmappedCodes.push(code);
+      continue;
+    }
+    try {
+      features.push({
+        type: "Feature",
+        properties: { code },
+        geometry: parseGeometry(boundaryGeometry),
+      });
+    } catch (error) {
+      console.warn(`Skipping ZIP code ${code} with invalid boundary:`, error);
+      unmappedCodes.push(code);
+    }
   }
-
-  const features = zipCodes.map(({ code, boundaryGeometry }) => ({
-    type: "Feature" as const,
-    properties: { code },
-    geometry: parseGeometry(boundaryGeometry),
-  }));
   const points = features.flatMap(({ geometry }) =>
     getGeometryPoints(geometry),
   );
@@ -90,6 +104,7 @@ export function buildPublicationMapData(
         [0, 0],
         [0, 0],
       ],
+      unmappedCodes,
     };
   }
 
@@ -114,6 +129,7 @@ export function buildPublicationMapData(
       [bounds.south, bounds.west],
       [bounds.north, bounds.east],
     ],
+    unmappedCodes,
   };
 }
 

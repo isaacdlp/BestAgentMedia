@@ -100,5 +100,14 @@ export async function POST(request: Request) {
     }
   });
 
-  return NextResponse.json({ created: tasks.length, skipped: businessIds.length - newIds.length }, { status: 202 });
+  const registryTasks = await prisma.task.findMany({
+    where: { reachoutTaskId: { in: tasks.map((task) => task.id) } },
+    orderBy: { id: "asc" },
+    select: { id: true, name: true },
+  });
+
+  return NextResponse.json(
+    { created: tasks.length, skipped: businessIds.length - newIds.length, tasks: registryTasks },
+    { status: 202 },
+  );
 }

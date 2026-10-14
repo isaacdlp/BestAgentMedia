@@ -4,10 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ClientListToolbar } from "@/components/list-toolbar";
 import { ClientListPagination } from "@/components/list-pagination";
+import { useBulkSelection, BulkActionBar, BulkCheckbox, bulkDelete, bulkDeleteMessage } from "@/components/bulk-select";
 
-type TaskStep = { at: string; level: "info" | "success" | "error"; message: string };
+export type TaskStep = { at: string; level: "info" | "success" | "error"; message: string };
 
-type TaskResult = {
+export type TaskResult = {
   // Designer
   pageCount?: number;
   elementCount?: number;
@@ -58,6 +59,7 @@ export type AgentTaskSummary = {
   startedAt: string | null;
   completedAt: string | null;
   triggeredBy: { name: string; surname: string } | null;
+  registry?: { id: number } | null;
 };
 
 function durationLabel(startedAt: string | null, completedAt: string | null): string {
@@ -69,7 +71,7 @@ function durationLabel(startedAt: string | null, completedAt: string | null): st
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function TaskStepLog({ steps }: { steps: TaskStep[] }) {
+export function TaskStepLog({ steps }: { steps: TaskStep[] }) {
   if (!steps.length) return <p className="muted agent-task-no-steps">No steps recorded.</p>;
   return (
     <ol className="agent-task-steps">
@@ -90,7 +92,7 @@ function DeltaBadge({ value }: { value: number | null | undefined }) {
   return <span className={cls}>{sign}{value}</span>;
 }
 
-function TaskResultSummary({ result, agentId }: { result: TaskResult; agentId: number }) {
+export function TaskResultSummary({ result, agentId }: { result: TaskResult; agentId: number }) {
   if (result.emailTo) {
     const pitchLabel =
       result.pitchType === "sponsored_article"
@@ -223,6 +225,8 @@ function AgentTaskCard({
   onDelete,
   onRefresh,
   busyId,
+  selected,
+  onToggleSelect,
 }: {
   task: AgentTaskSummary;
   agentId: number;
@@ -231,6 +235,8 @@ function AgentTaskCard({
   onDelete: (t: AgentTaskSummary) => void;
   onRefresh: () => void;
   busyId: string | null;
+  selected: boolean;
+  onToggleSelect: (t: AgentTaskSummary) => void;
 }) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
@@ -289,6 +295,12 @@ function AgentTaskCard({
     <article className="agent-task-card">
       <div className="agent-task-card-header">
         <div className="agent-task-card-title-row">
+          <BulkCheckbox
+            checked={selected}
+            disabled={busyId === task.id}
+            label={`Select task ${task.label}`}
+            onChange={() => onToggleSelect(task)}
+          />
           <span className={`agent-task-status-chip agent-task-status-${task.status.toLowerCase()}`}>
             {task.status.charAt(0) + task.status.slice(1).toLowerCase()}
           </span>
@@ -300,6 +312,11 @@ function AgentTaskCard({
             {duration ? ` · ${duration}` : ""}
             {" · by "}{triggeredByName}
           </span>
+          {task.registry ? (
+            <a className="text-link agent-task-issue-link" href={`/tasks/${task.registry.id}`}>
+              Open task →
+            </a>
+          ) : null}
           {task.issueId ? (
             <a className="text-link agent-task-issue-link" href={`/issues/${task.issueId}`}>
               View issue →
@@ -423,6 +440,8 @@ export function AgentTaskList({
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const selection = useBulkSelection(tasks.map((t) => t.id));
 
   function buildUrl() {
     const params = new URLSearchParams();
@@ -447,14 +466,12 @@ export function AgentTaskList({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to refresh tasks.");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, q, sort, order, page, limit]);
 
   // Re-fetch when filter/sort/page/limit changes (debounce q)
   useEffect(() => {
     const id = setTimeout(() => { void refreshTasks(); }, q ? 300 : 0);
     return () => clearTimeout(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, sort, order, page, limit]);
 
   // Auto-refresh while any task is active
@@ -496,6 +513,20 @@ export function AgentTaskList({
     }
   }, [agentId, refreshTasks]);
 
+  async function handleBulkDelete() {
+    const ids = selection.selectedIds;
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} task${ids.length === 1 ? "" : "s"}?`)) return;
+    setBulkBusy(true);
+    setError(null);
+    const { deleted, failed } = await bulkDelete(ids, (id) => `/api/agents/${agentId}/tasks/${id}`);
+    selection.clear();
+    await refreshTasks();
+    const message = bulkDeleteMessage(failed, deleted.length);
+    if (message) setError(message);
+    setBulkBusy(false);
+  }
+
   return (
     <section className="panel agent-tasks-panel" aria-live="polite">
       <div className="panel-heading">
@@ -517,6 +548,16 @@ export function AgentTaskList({
       />
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {tasks.length ? (
+        <BulkActionBar
+          allSelected={selection.allSelected}
+          busy={bulkBusy}
+          count={selection.selectedIds.length}
+          onDelete={() => void handleBulkDelete()}
+          onToggleAll={selection.toggleAll}
+          someSelected={selection.someSelected}
+        />
+      ) : null}
+      {tasks.length ? (
         <div className="agent-task-list">
           {tasks.map((task) => (
             <AgentTaskCard
@@ -526,6 +567,8 @@ export function AgentTaskList({
               onDelete={handleDelete}
               onRefresh={() => void refreshTasks()}
               onStop={handleStop}
+              onToggleSelect={(t) => selection.toggle(t.id)}
+              selected={selection.isSelected(task.id)}
               subAgents={subAgents}
               task={task}
             />

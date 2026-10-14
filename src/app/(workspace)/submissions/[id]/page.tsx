@@ -48,7 +48,7 @@ export default async function SubmissionPage({
     notFound();
   }
 
-  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.PUBLISHER;
+  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
 
   const [editorAgent, assistantAgent] = canManage
     ? await Promise.all([
@@ -113,13 +113,11 @@ export default async function SubmissionPage({
           {canManage && editorAgent?.enabled ? (
             <ReviewButton
               apiPath={`/api/submissions/${submission.id}/review`}
-              agentPath={`/agents/${editorAgent.id}`}
             />
           ) : null}
           {canManage && hasReview && assistantAgent?.enabled ? (
             <RequestInfoButton
               apiPath={`/api/submissions/${submission.id}/clarify`}
-              agentPath={`/agents/${assistantAgent.id}`}
             />
           ) : null}
           {canManage ? (

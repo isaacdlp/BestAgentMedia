@@ -71,7 +71,6 @@ export function AdCreativeSection({
       <div style={{ padding: "0 1.5rem 1.25rem" }}>
         {creative ? (
           <div className="ad-creative-preview">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               key={creative.originalName}
               src={`${imgSrc}?t=${Date.now()}`}

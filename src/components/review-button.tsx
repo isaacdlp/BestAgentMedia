@@ -1,43 +1,21 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useTaskLauncher } from "@/components/use-task-launcher";
 
-export function ReviewButton({
-  apiPath,
-  agentPath,
-}: {
-  apiPath: string;
-  agentPath: string;
-}) {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  async function handleReview() {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch(apiPath, { method: "POST" });
-      const result = (await response.json()) as { taskId?: string; error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Review failed.");
-      router.push(agentPath);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Review failed.");
-      setLoading(false);
-    }
-  }
+/** Launches a Copywriter editorial review Task. */
+export function ReviewButton({ apiPath }: { apiPath: string }) {
+  const { launch, starting, error } = useTaskLauncher();
 
   return (
     <div className="review-button-wrap">
       {error ? <p className="form-error review-button-error">{error}</p> : null}
       <button
         className="button button-secondary"
-        disabled={loading}
-        onClick={() => void handleReview()}
+        disabled={starting}
+        onClick={() => void launch(apiPath)}
         type="button"
       >
-        {loading ? "Reviewing…" : "Review"}
+        {starting ? "Starting…" : "Review"}
       </button>
     </div>
   );

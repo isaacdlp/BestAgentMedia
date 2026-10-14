@@ -2,7 +2,7 @@
 
 ## Developer handover
 
-For the current application architecture, setup/validation commands, authorization and ID conventions, data and media locations, migration notes, Issue/Polotno persistence, and known implementation gaps, read [DEVELOPMENT.md](./DEVELOPMENT.md). Use [README.md](./README.md) for first-run setup and feature documentation. Never open or copy `.env` values; use `.env.example` only to identify configuration names.
+For the current application architecture, setup/validation commands, authorization and ID conventions, data and media locations, migration notes, Issue/CreativeEditor (CE.SDK) persistence, and known implementation gaps, read [DEVELOPMENT.md](./DEVELOPMENT.md). Use [README.md](./README.md) for first-run setup and feature documentation. Never open or copy `.env` values; use `.env.example` only to identify configuration names.
 
 ## Purpose
 
@@ -55,3 +55,9 @@ The proposed layout and cover must be editable by people after generation, not j
 
 - Publications use their associated five-digit ZIP codes as their only location data.
 - Do not add City or State fields to the Publication schema or its forms; retain City and State fields for Business records where applicable.
+
+## List search
+
+- Search inputs on list pages must query the whole dataset on the server (or API), never only the rows on the current page, and must reset to page 1 when the query changes.
+- Search must match every field a person can see in the row or would reasonably search by, including related records and provider/source labels (for example a task's source system, ZIP code, categories, or business name), not just the display name.
+- Before finishing, verify that a record known to be on a late page is found by a search on a visible attribute.

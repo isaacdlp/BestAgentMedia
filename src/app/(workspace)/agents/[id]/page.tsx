@@ -3,6 +3,7 @@ import { UserRole } from "@prisma/client";
 import { toggleAgent, updateAgentSettings } from "@/app/actions/agents";
 import type { AgentTaskSummary } from "@/components/agent-task-list";
 import { AgentTaskList } from "@/components/agent-task-list";
+import { AgentIdentityPanel } from "@/components/agent-identity-panel";
 import type { SubAgentSummary } from "@/components/sub-agent-list";
 import { SubAgentList } from "@/components/sub-agent-list";
 import { requireUser } from "@/lib/auth";
@@ -28,10 +29,13 @@ export default async function AgentDetailPage({
       description: true,
       enabled: true,
       settings: true,
+      personaName: true,
+      picturePath: true,
       updatedAt: true,
     },
   });
   if (!agent) notFound();
+  const hasSubAgents = agent.slug === "assistant" || agent.slug === "marketer";
 
   const [{ tasks, taskTotal }, { sas: subAgents, saTotal: subAgentTotal }] = await Promise.all([
     Promise.all([
@@ -51,6 +55,7 @@ export default async function AgentDetailPage({
           startedAt: true,
           completedAt: true,
           triggeredBy: { select: { name: true, surname: true } },
+          registry: { select: { id: true } },
         },
       }),
       prisma.agentTask.count({ where: { agentId: agent.id } }),
@@ -88,7 +93,7 @@ export default async function AgentDetailPage({
       <div className="page-heading">
         <div>
           <p className="eyebrow">AGENTS</p>
-          <h1>{agent.name}</h1>
+          <h1>{agent.personaName ? `${agent.personaName} · ${agent.name}` : agent.name}</h1>
           <p className="muted">{agent.description}</p>
         </div>
         <span className={`role-pill ${agent.enabled ? "" : "role-pill-muted"}`}>
@@ -97,6 +102,16 @@ export default async function AgentDetailPage({
       </div>
 
       <div className="agent-detail-grid">
+        {/* Name and picture (agents without sub-agents) */}
+        {!hasSubAgents ? (
+          <AgentIdentityPanel
+            agentId={agent.id}
+            agentName={agent.name}
+            personaName={agent.personaName}
+            picturePath={agent.picturePath}
+          />
+        ) : null}
+
         {/* Enable / disable toggle */}
         <section className="panel agent-control-panel">
           <div className="panel-heading">

@@ -5,6 +5,9 @@ import { z } from "zod";
 import { getArticleScope, getIssueScope } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { CESDK_DESIGN_FORMAT } from "@/lib/issue-design";
+
+const maximumDesignBytes = 5 * 1024 * 1024;
 
 const issuePageSchema = z.object({
   id: z.string().regex(/^[\w-]{1,64}$/),
@@ -12,13 +15,18 @@ const issuePageSchema = z.object({
   custom: z.unknown().optional(),
 }).passthrough();
 
+// The editor saves a CreativeEditor (CE.SDK) document: the serialized scene plus a page
+// manifest of page IDs and linked content (see src/lib/issue-design.ts).
 const designSchema = z
   .object({
+    format: z.literal(CESDK_DESIGN_FORMAT),
+    version: z.literal(1),
     width: z.number().finite().positive().max(10000),
     height: z.number().finite().positive().max(10000),
+    scene: z.string().min(1).max(maximumDesignBytes),
     pages: z.array(issuePageSchema).min(2).max(200),
   })
-  .passthrough();
+  .strict();
 
 export async function PATCH(
   request: Request,
@@ -28,11 +36,11 @@ export async function PATCH(
   if (!user) {
     return NextResponse.json({ error: "Sign in to edit this issue." }, { status: 401 });
   }
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     return NextResponse.json({ error: "You cannot edit issue layouts." }, { status: 403 });
   }
   const contentLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > 5 * 1024 * 1024) {
+  if (Number.isFinite(contentLength) && contentLength > maximumDesignBytes) {
     return NextResponse.json({ error: "The issue design cannot exceed 5 MB." }, { status: 413 });
   }
 
@@ -45,7 +53,7 @@ export async function PATCH(
   const parsed = designSchema.safeParse(input);
   if (
     !parsed.success ||
-    Buffer.byteLength(JSON.stringify(input), "utf8") > 5 * 1024 * 1024
+    Buffer.byteLength(JSON.stringify(input), "utf8") > maximumDesignBytes
   ) {
     return NextResponse.json({ error: "The issue design is invalid or too large." }, { status: 400 });
   }

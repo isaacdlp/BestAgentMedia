@@ -11,6 +11,7 @@ type PublicationEditorProps = {
   id: number;
   name: string;
   slug: string;
+  description: string | null;
   zipCodes: string[];
   submissionCount: number;
   advertisementCount: number;
@@ -23,6 +24,7 @@ export function PublicationEditor({
   id,
   name,
   slug,
+  description,
   zipCodes,
   submissionCount,
   advertisementCount,
@@ -38,6 +40,10 @@ export function PublicationEditor({
       <div className="business-form-grid">
         <PublicationField label="Name" name="name" required value={name} />
         <PublicationField label="Slug" name="slug" required value={slug} />
+        <label className="business-field business-field-wide">
+          <span>Description</span>
+          <textarea defaultValue={description ?? ""} name="description" rows={4} />
+        </label>
         <label className="business-field business-field-wide">
           <span>ZIP codes (one per line)</span>
           <textarea

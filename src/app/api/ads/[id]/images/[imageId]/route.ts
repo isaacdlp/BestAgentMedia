@@ -57,8 +57,8 @@ export async function DELETE(
 ) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
-    return NextResponse.json({ error: "Admins and publishers only." }, { status: 403 });
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
+    return NextResponse.json({ error: "Admins and editors only." }, { status: 403 });
   }
 
   const scope = await getAdvertisementScope(user);

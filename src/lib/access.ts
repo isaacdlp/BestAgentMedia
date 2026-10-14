@@ -7,7 +7,7 @@ export function getBusinessScope(
   user: AwaitedUser,
 ): Prisma.BusinessWhereInput | null {
   if (user.role === UserRole.ADMIN) return {};
-  if (user.role === UserRole.PUBLISHER) return null;
+  if (user.role === UserRole.EDITOR) return null;
   return { ownerUserId: user.id };
 }
 
@@ -17,7 +17,7 @@ export async function getSubmissionScope(
   switch (user.role) {
     case UserRole.ADMIN:
       return {};
-    case UserRole.PUBLISHER: {
+    case UserRole.EDITOR: {
       const assignments = await prisma.publicationPublisher.findMany({
         where: { userId: user.id },
         select: { publicationId: true },
@@ -35,7 +35,7 @@ export async function getAdvertisementScope(
   switch (user.role) {
     case UserRole.ADMIN:
       return {};
-    case UserRole.PUBLISHER: {
+    case UserRole.EDITOR: {
       const assignments = await prisma.publicationPublisher.findMany({
         where: { userId: user.id },
         select: { publicationId: true },
@@ -57,7 +57,7 @@ export async function getPublicationScope(
   switch (user.role) {
     case UserRole.ADMIN:
       return {};
-    case UserRole.PUBLISHER: {
+    case UserRole.EDITOR: {
       const assignments = await prisma.publicationPublisher.findMany({
         where: { userId: user.id },
         select: { publicationId: true },
@@ -75,7 +75,7 @@ export async function getIssueScope(
   switch (user.role) {
     case UserRole.ADMIN:
       return {};
-    case UserRole.PUBLISHER: {
+    case UserRole.EDITOR: {
       const assignments = await prisma.publicationPublisher.findMany({
         where: { userId: user.id },
         select: { publicationId: true },
@@ -95,7 +95,7 @@ export async function getArticleScope(
   switch (user.role) {
     case UserRole.ADMIN:
       return {};
-    case UserRole.PUBLISHER: {
+    case UserRole.EDITOR: {
       const assignments = await prisma.publicationPublisher.findMany({
         where: { userId: user.id },
         select: { publicationId: true },

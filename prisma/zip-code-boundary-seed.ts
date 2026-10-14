@@ -4,6 +4,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { geometryAreaSquareMiles } from "./zip-code-area";
 
 type SeedZipCode = {
   code: string;
@@ -31,7 +32,7 @@ const expectedPopulationCount = 33_772;
 
 export async function seedZipCodeBoundaries(prisma: PrismaClient) {
   const [existingRecords] = await prisma.$queryRaw<
-    Array<{ boundaryCount: bigint; populationCount: bigint }>
+    Array<{ boundaryCount: bigint; populationCount: bigint; areaCount: bigint }>
   >`
     SELECT
       COUNT(*) FILTER (
@@ -39,13 +40,15 @@ export async function seedZipCodeBoundaries(prisma: PrismaClient) {
       ) AS "boundaryCount",
       COUNT(*) FILTER (
         WHERE "estimatedPopulation" IS NOT NULL AND "populationVintage" = 2024
-      ) AS "populationCount"
+      ) AS "populationCount",
+      COUNT(*) FILTER (WHERE "areaSquareMiles" IS NOT NULL) AS "areaCount"
     FROM "ZipCode"
   `;
 
   if (
     Number(existingRecords.boundaryCount) === expectedBoundaryCount &&
-    Number(existingRecords.populationCount) === expectedPopulationCount
+    Number(existingRecords.populationCount) === expectedPopulationCount &&
+    Number(existingRecords.areaCount) === expectedBoundaryCount
   ) {
     console.info("All offline Census ZIP boundaries and population estimates are already seeded.");
     return;
@@ -103,6 +106,7 @@ async function upsertBatch(prisma: PrismaClient, batch: SeedZipCode[]) {
       ${geometry}::jsonb,
       ${row.centroidLatitude},
       ${row.centroidLongitude},
+      ${geometryAreaSquareMiles(row.geometry)},
       ${row.boundaryVintage},
       ${row.estimatedPopulation},
       ${row.populationMarginOfError},
@@ -116,6 +120,7 @@ async function upsertBatch(prisma: PrismaClient, batch: SeedZipCode[]) {
       "boundaryGeometry",
       "centroidLatitude",
       "centroidLongitude",
+      "areaSquareMiles",
       "boundaryVintage",
       "estimatedPopulation",
       "populationMarginOfError",
@@ -126,6 +131,7 @@ async function upsertBatch(prisma: PrismaClient, batch: SeedZipCode[]) {
       "boundaryGeometry" = EXCLUDED."boundaryGeometry",
       "centroidLatitude" = EXCLUDED."centroidLatitude",
       "centroidLongitude" = EXCLUDED."centroidLongitude",
+      "areaSquareMiles" = EXCLUDED."areaSquareMiles",
       "boundaryVintage" = EXCLUDED."boundaryVintage",
       "estimatedPopulation" = EXCLUDED."estimatedPopulation",
       "populationMarginOfError" = EXCLUDED."populationMarginOfError",

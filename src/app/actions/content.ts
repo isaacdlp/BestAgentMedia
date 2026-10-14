@@ -22,6 +22,7 @@ import { requireUser } from "@/lib/auth";
 import { articleImageDirectory, removeArticleImageFiles } from "@/lib/article-images";
 import { submissionImageDirectory } from "@/lib/submission-images";
 import { prisma } from "@/lib/db";
+import { slugify } from "@/lib/issue-naming";
 
 const idSchema = z.string().regex(/^[\w-]{1,64}$/);
 const numericIdSchema = z
@@ -39,6 +40,7 @@ export async function createIssue(formData: FormData) {
 
   const publicationId = numericIdSchema.parse(formData.get("publicationId"));
   const publicationDate = parsePublicationDate(formData.get("publicationDate"));
+  const { name, slug: requestedSlug, description } = parseIssueText(formData);
   const publicationScope = await getPublicationScope(user);
   if (
     !publicationScope ||
@@ -50,9 +52,13 @@ export async function createIssue(formData: FormData) {
     throw new Error("Choose a publication assigned to your workspace.");
   }
 
+  const slug = await uniqueIssueSlug(publicationId, requestedSlug);
   const issue = await prisma.issue.create({
     data: {
       publicationId,
+      name,
+      slug,
+      description,
       publicationDate,
       pages: {
         create: [
@@ -68,6 +74,39 @@ export async function createIssue(formData: FormData) {
   redirect(`/issues/${issue.id}`);
 }
 
+const issueTextSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  slug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Slug may contain only lowercase letters, numbers and hyphens."),
+  description: z.string().trim().max(5000),
+});
+
+function parseIssueText(formData: FormData) {
+  const name = String(formData.get("name") ?? "");
+  const parsed = issueTextSchema.parse({
+    name,
+    slug: String(formData.get("slug") ?? "") || slugify(name),
+    description: String(formData.get("description") ?? ""),
+  });
+  return { ...parsed, description: parsed.description || null };
+}
+
+async function uniqueIssueSlug(publicationId: number, slug: string) {
+  let candidate = slug;
+  for (let suffix = 2; ; suffix += 1) {
+    const existing = await prisma.issue.findFirst({
+      where: { publicationId, slug: candidate },
+      select: { id: true },
+    });
+    if (!existing) return candidate;
+    candidate = `${slug}-${suffix}`;
+  }
+}
+
 export async function updateIssueDetails(formData: FormData) {
   const user = await requireUser();
   const scope = await getIssueScope(user);
@@ -75,9 +114,21 @@ export async function updateIssueDetails(formData: FormData) {
   const id = idSchema.parse(formData.get("id"));
   const status = statusSchema.parse(formData.get("status"));
   const publicationDate = parsePublicationDate(formData.get("publicationDate"));
+  const { name, slug, description } = parseIssueText(formData);
+  const current = await prisma.issue.findFirst({
+    where: { id, ...scope },
+    select: { publicationId: true, slug: true },
+  });
+  if (!current) throw new Error("Issue not found or not accessible.");
+  if (slug !== current.slug && (await prisma.issue.findFirst({
+    where: { publicationId: current.publicationId, slug, NOT: { id } },
+    select: { id: true },
+  }))) {
+    throw new Error("Another issue of this publication already uses that slug.");
+  }
   const result = await prisma.issue.updateMany({
     where: { id, ...scope },
-    data: { status, publicationDate },
+    data: { status, publicationDate, name, slug, description },
   });
   if (result.count !== 1) throw new Error("Issue not found or not accessible.");
   revalidatePath("/issues");
@@ -86,7 +137,7 @@ export async function updateIssueDetails(formData: FormData) {
 
 export async function updateArticleStatus(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
   const id = idSchema.parse(formData.get("id"));
@@ -103,7 +154,7 @@ export async function updateArticleStatus(formData: FormData) {
 
 export async function promoteSubmissionToArticle(formData: FormData) {
   const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.PUBLISHER) {
+  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
     redirect("/dashboard");
   }
   const id = idSchema.parse(formData.get("submissionId"));

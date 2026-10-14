@@ -39,7 +39,6 @@ export function ListToolbar({
       startTransition(() => router.push(`${pathname}?${params.toString()}`));
     }, 300);
     return () => clearTimeout(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchValue]);
 
   function navigate(overrides: Record<string, string | undefined>) {

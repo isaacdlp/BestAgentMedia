@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ClientListToolbar } from "@/components/list-toolbar";
 import { ClientListPagination } from "@/components/list-pagination";
+import { useBulkSelection, BulkActionBar, BulkCheckbox, bulkDelete, bulkDeleteMessage } from "@/components/bulk-select";
 
 export type ReachoutTaskSummary = {
   id: string;
@@ -60,6 +61,8 @@ export function ReachoutTaskList({
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
   const [statusFilter, setStatusFilter] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const selection = useBulkSelection(tasks.map((t) => t.id));
 
   function buildUrl() {
     const params = new URLSearchParams();
@@ -83,13 +86,11 @@ export function ReachoutTaskList({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Refresh failed.");
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, statusFilter, sort, order, page, limit]);
 
   useEffect(() => {
     const id = setTimeout(() => { void refresh(); }, q ? 300 : 0);
     return () => clearTimeout(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, statusFilter, sort, order, page, limit]);
 
   // Auto-refresh while any task is active
@@ -133,6 +134,20 @@ export function ReachoutTaskList({
     }
   }
 
+  async function handleBulkDelete() {
+    const ids = selection.selectedIds;
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} onboarding task${ids.length === 1 ? "" : "s"}?`)) return;
+    setBulkBusy(true);
+    setError(null);
+    const { deleted, failed } = await bulkDelete(ids, (id) => `/api/reachout-tasks/${id}`);
+    selection.clear();
+    await refresh();
+    const message = bulkDeleteMessage(failed, deleted.length);
+    if (message) setError(message);
+    setBulkBusy(false);
+  }
+
   return (
     <section aria-live="polite" className="panel reachout-tasks-panel">
       <div className="panel-heading">
@@ -167,11 +182,27 @@ export function ReachoutTaskList({
       {error ? <p className="form-error" role="alert">{error}</p> : null}
 
       {tasks.length ? (
+        <BulkActionBar
+          allSelected={selection.allSelected}
+          busy={bulkBusy}
+          count={selection.selectedIds.length}
+          onDelete={() => void handleBulkDelete()}
+          onToggleAll={selection.toggleAll}
+          someSelected={selection.someSelected}
+        />
+      ) : null}
+      {tasks.length ? (
         <div className="reachout-task-list">
           {tasks.map((task) => (
             <article className="reachout-task" key={task.id}>
               <div className="reachout-task-header">
                 <div className="reachout-task-title">
+                  <BulkCheckbox
+                    checked={selection.isSelected(task.id)}
+                    disabled={bulkBusy}
+                    label={`Select onboarding task for ${task.business.name}`}
+                    onChange={() => selection.toggle(task.id)}
+                  />
                   <Link className="reachout-task-business-link" href={`/businesses/${task.business.id}`}>
                     {task.business.name}
                   </Link>

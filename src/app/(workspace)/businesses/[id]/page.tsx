@@ -5,8 +5,10 @@ import { UserRole } from "@prisma/client";
 import { updateBusiness } from "@/app/actions/businesses";
 import { deleteBusinessImage } from "@/app/actions/ads";
 import { BusinessLocationMap } from "@/components/business-location-map";
+import { OnboardButton } from "@/components/onboard-button";
 import { PitchButton } from "@/components/pitch-button";
 import { BusinessImagesForm } from "./business-images-form";
+import { ImportImagesButton } from "./import-images-button";
 import { requireUser } from "@/lib/auth";
 import { getBusinessScope } from "@/lib/access";
 import { prisma } from "@/lib/db";
@@ -67,8 +69,15 @@ export default async function BusinessDetailPage({
         </div>
         <div className="page-heading-actions">
           {isAdmin ? <span className="role-pill">{business.sourceProvider.toLowerCase()}</span> : null}
+          {isAdmin ? (
+            <OnboardButton
+              businessId={business.id}
+              claimed={business.ownerUserId !== null}
+              hasEmail={Boolean(business.email)}
+            />
+          ) : null}
           {isAdmin && marketerAgent?.enabled && business.email ? (
-            <PitchButton businessId={business.id} agentPath={`/agents/${marketerAgent.id}`} />
+            <PitchButton businessId={business.id} />
           ) : null}
         </div>
       </div>
@@ -171,9 +180,12 @@ export default async function BusinessDetailPage({
           <h2>Business images <span className="count-badge">{businessImages.length}</span></h2>
         </div>
         <div style={{ padding: "0 1.5rem 0.75rem" }}>
-          <p className="muted" style={{ fontSize: "0.875rem", marginBottom: "1rem" }}>
-            Images shared across all ads created for this business.
-          </p>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem", marginBottom: "1rem" }}>
+            <p className="muted" style={{ fontSize: "0.875rem", margin: 0 }}>
+              Images shared across all ads created for this business.
+            </p>
+            <ImportImagesButton businessId={business.id} />
+          </div>
           {businessImages.length > 0 ? (
             <ul className="submission-image-grid">
               {businessImages.map((img) => (

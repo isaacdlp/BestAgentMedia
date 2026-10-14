@@ -1,0 +1,1 @@
+ALTER TABLE "ZipCode" ADD COLUMN "areaSquareMiles" DOUBLE PRECISION;

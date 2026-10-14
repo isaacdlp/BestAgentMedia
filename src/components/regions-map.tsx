@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 export type RegionPublication = {
   id: number;
   name: string;
+  coverImageUrl: string | null;
 };
 
 export type RegionSelection = {

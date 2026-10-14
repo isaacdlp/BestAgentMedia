@@ -34,6 +34,7 @@ const updatePublicationSchema = z.object({
     .min(1)
     .max(200)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  description: z.string().trim().max(5000),
   zipCodes: z
     .string()
     .transform((value) => [
@@ -60,6 +61,7 @@ export async function updatePublication(
     id: formData.get("id"),
     name: formData.get("name"),
     slug: formData.get("slug"),
+    description: formData.get("description") ?? "",
     zipCodes: formData.get("zipCodes"),
   });
   if (!parsedPublication.success) {
@@ -120,6 +122,7 @@ export async function updatePublication(
         data: {
           name: publication.name,
           slug: publication.slug,
+          description: publication.description || null,
           zipCodes: {
             set: publication.zipCodes.map((code) => ({ code })),
           },

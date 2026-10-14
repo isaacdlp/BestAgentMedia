@@ -23,6 +23,7 @@ export async function getCurrentUser() {
       name: true,
       surname: true,
       phone: true,
+      picturePath: true,
       role: true,
       active: true,
       authVersion: true,

@@ -11,7 +11,7 @@ BestAgentMedia is a role-aware Next.js application for local publication workflo
 - Next.js App Router, React, TypeScript, and ESLint.
 - PostgreSQL through Prisma; the checked-in schema is `prisma/schema.prisma`.
 - Iron-session cookies for authentication and bcrypt password hashing.
-- Polotno for the browser-based issue canvas.
+- CreativeEditor SDK (`@cesdk/cesdk-js`, pinned to 1.83.0) for the browser-based issue canvas.
 - Sharp for validating uploaded image data.
 - Docker Compose is optional for local PostgreSQL.
 
@@ -32,7 +32,7 @@ npx prisma migrate status
 npx next build
 ```
 
-`npm run db:deploy` deploys migrations and publication assets. `npm run db:migrate` is the development migration command. `npm run db:seed` seeds the administrator, demo accounts, publications, businesses, ZIP data, and static submission fixtures. No test script is currently declared in `package.json`; use the lint, type-check, Prisma validation, and build commands above for the baseline checks.
+`npm run db:deploy` only applies migrations; all seed data (including ZIP boundaries and publication assets) is loaded by `npm run db:seed`. `npm run db:migrate` is the development migration command. `npm run db:seed` seeds the administrator, publications (from `prisma/seed/publications/`), ZIP data, and agents. No test script is currently declared in `package.json`; use the lint, type-check, Prisma validation, and build commands above for the baseline checks.
 
 The working database had all migrations applied at the last verification, including `20261012145000_issue_combined_design`. A new local database must still run the documented deployment command. Do not assume another developer's database is current.
 
@@ -50,7 +50,7 @@ The working database had all migrations applied at the last verification, includ
 
 ## Roles, access, and IDs
 
-The explicit `UserRole` values are `ADMIN` and `PUBLISHER`. Contributors are ordinary users whose `role` is `NULL`; there is no Contributor enum value. Authorization is enforced in server-side page queries, server actions, and API routes. Reuse the scope helpers in `src/lib/access.ts` (`getSubmissionScope`, `getPublicationScope`, `getIssueScope`, `getArticleScope`, and `getAdvertisementScope`) rather than relying on navigation visibility.
+The `UserRole` values are `CONTRIBUTOR` (everyone; a `NULL` role is treated the same), `EDITOR` (can be assigned as a publication Publisher and create Issues, Advertisements, and Articles), and `ADMIN`. Authorization is enforced in server-side page queries, server actions, and API routes. Reuse the scope helpers in `src/lib/access.ts` (`getSubmissionScope`, `getPublicationScope`, `getIssueScope`, `getArticleScope`, and `getAdvertisementScope`) rather than relying on navigation visibility.
 
 Publishers are restricted to assigned publications. Contributors can access their own submissions and articles allowed by the article scope. The Users list and Businesses directory are administrator-only. Re-check publication ownership when writing, not just when rendering a form.
 
@@ -62,13 +62,12 @@ Publications are linked to five-digit ZIP codes through `ZipCode`; do not add Ci
 
 - Publication mappings and cover fixtures are in `prisma/seed/publications/`; deployment copies covers to `media/publications/`. Runtime code should not depend on the original `store/` folder.
 - Census snapshots are in `prisma/seed/data/`; refresh only through `npm run db:refresh-census-seed`.
-- Submission text and image fixtures are checked in under `prisma/seed/submissions/`. The seed copies fixture images into `media/submissions/`; it does not generate submission text/images at runtime.
 - New submission uploads are limited to five JPEG, PNG, or WebP files, 10 MB each. They are decoded/validated and stored outside the public web root in `media/submissions/`.
 - Article image uploads are stored in `media/articles/`; see `src/lib/article-images.ts` and the authorized route under `src/app/api/articles/[id]/images/[imageId]/`.
 - The corresponding image APIs check user access before serving a file. Preserve that protection; do not expose private media with a static public route.
 - `media/` contents are runtime data and may be ignored/untracked. Do not delete or replace them during unrelated cleanup.
 
-The seed includes demo Publisher/Contributor accounts and five Boca Living submission fixtures. Demo account addresses and seed behavior are documented in the README. The seed uses the local administrator password for demo accounts, so only use it with local/demo credentials.
+The seed creates only the administrator account; no demo users, submissions, issues, or businesses are seeded.
 
 ## Content workflows
 
@@ -82,19 +81,69 @@ An accepted submission can be promoted to a draft Article from the submission wo
 
 Articles have Draft/Accepted/Published status, a title, paragraph-based body, optional captioned images, and one or more `ArticlePublication` assignments. Article create/update endpoints are under `/api/articles`. Articles may be associated with one or more publications; only content assigned to the issue publication should be insertable into that Issue.
 
-Advertisements belong to a Business and a Publication and have their own review status. The current issue library makes eligible publication ads available to the canvas. Business discovery is implemented for HERE Maps only; other listed providers return Not Implemented. HERE import tasks require `HERE_KEY`, a ZIP with a stored boundary, and an administrator. The importer filters results to the ZIP boundary and skips existing HERE place IDs.
+Advertisements belong to a Business and a Publication and have their own review status. The current issue library makes eligible publication ads available to the canvas. Business discovery is implemented for HERE Maps only; other listed providers return Not Implemented. HERE import tasks require `HERE_KEY`, a ZIP with a stored boundary, and an administrator. The importer filters results to the ZIP boundary and skips existing HERE place IDs. Business "Import Images" (`POST /api/businesses/[id]/images/import`) launches a Marketer AgentTask that finds the business via Google Places Text Search (New), downloads up to the remaining 5-image allowance, and stores them as BusinessImage rows (author attribution kept in `originalName`); it requires `GOOGLE_KEY`.
 
-### Issues and the Polotno canvas
+### Issues and the CreativeEditor canvas
 
 An Issue belongs to one Publication and has a publication date and Draft/Accepted/Published status. `IssuePage` rows preserve page identity, order, and type (`COVER`, `INNER`, `BACK_COVER`); `IssuePagePlacement` rows associate canvas element IDs with either an Article or Advertisement.
 
-The current editor intentionally uses **one Polotno store/canvas for the entire Issue**, with Polotno's `PagesTimeline` managing pages. It is not one editor per page. The full-width canvas is above the editor controls and article/ad libraries. The page strip scrolls horizontally; a vertical mouse-wheel gesture over the page strip is translated into horizontal scrolling. Building-block controls add editable title and body text elements or upload JPEG/PNG/WebP images (10 MB maximum) to the active page. Issue images are stored under `media/issues/<issueId>/` and served through an authenticated, issue-scoped route; they are not embedded as base64 in the design JSON. Selecting article/ad library content adds a linked image or title element to the active page.
+The editor (`src/components/issue-page-editor.tsx`) intentionally uses **one CreativeEditor SDK (CE.SDK) scene for the entire Issue**, with pages in a `VerticalStack` layout and Pixel design units (816 × 1056 px pages by default). It is not one editor per page. Since CE.SDK 1.73 the web editor starts with an empty UI, so the editor first adds the vendored `DesignEditorConfig` plugin (`src/lib/cesdk-design-editor/`, copied from IMG.LY's `cesdk-web-examples` for 1.83), which supplies the dock, inspector, navigation bar, and panels. It calls `resetEditor()`, so it must be added before any asset sources or actions; re-copy it when upgrading CE.SDK. Without `NEXT_PUBLIC_CESDK_LICENSE`, CE.SDK logs a "For Evaluation Purposes Only" banner (Next.js forwards it to the dev-server terminal) and watermarks exports. The editor's dock includes CE.SDK's default libraries plus **Articles** and **Ads** libraries. These are custom asset sources; applying an item adds a linked image or title block to the current page. Image uploads go through the registered `uploadFile` action to `POST /api/issues/[id]/images` (JPEG/PNG/WebP/SVG, 10 MB maximum). Issue images are stored under `media/issues/<issueId>/` and served through an authenticated, issue-scoped route. Scenes reference them by absolute URL, not embedded data.
 
-The full Polotno document is stored as JSON in `Issue.designJson`. The migration `20261012145000_issue_combined_design` transferred legacy per-page designs into this combined document and removed `IssuePage.designJson`. Do not restore per-page persistence unless the data model and migration strategy are intentionally redesigned.
+Page and content identity live in CE.SDK block metadata (`bestAgentMedia/*` keys in `src/lib/issue-design.ts`): pages carry `issuePageId`/`pageType`, and linked blocks carry `elementId`/`sourceType`/`sourceId`. `src/lib/cesdk-issue-scene.ts` keeps the page rules after every edit:
+- New or duplicated pages become inner pages with fresh IDs.
+- The cover is moved back to first place and the back cover to last.
+- The cover and back cover have the `lifecycle/destroy` scope disabled.
 
-`PATCH /api/issues/[id]/design` is the aggregate persistence endpoint. It validates authentication/role, issue scope, JSON size and shape, page IDs, cover/back-cover placement, and linked article/ad availability within the Issue's publication. It reconciles IssuePage rows in canvas order and rebuilds IssuePagePlacement records transactionally. New Polotno pages use their canvas IDs as database IDs. `POST /api/issues/[id]/images` accepts issue-scoped image uploads; `GET /api/issues/[id]/images/[filename]` serves those assets after checking issue access. Preserve the invariant that the cover remains first, the back cover remains last, and at least one inner page remains.
+The navigation bar's actions menu (`src/lib/cesdk-issue-files.ts`) exports locally in the browser and downloads the file; nothing is uploaded or sent:
+- the current page as PNG, JPEG, WebP, TGA, SVG or MP4;
+- the whole issue as one multi-page PDF;
+- audio blocks as WAV/M4A (only present in imported scenes);
+- the scene as `.imgly`, or an archive `.imgly` with embedded assets.
 
-The Polotno prototype works with an empty SDK key for local editing. Online stock/template integrations and production licensing can require a Polotno account/license. Do not add a hard API-key gate that prevents the local prototype from loading.
+Importing a scene or archive (`.imgly`, `.scene`, `.zip`) replaces the layout after confirmation. `adoptImportedScene` maps the imported pages onto the issue's page IDs by position (first page = cover, last = back cover) and adds blank pages until there are at least three. It strips links to articles or ads outside the issue's libraries. Archive-embedded images are uploaded to the issue media folder and relocated. Other embedded assets, such as fonts or video, are reported as not stored. If the import fails, the previous scene is restored. Issue image uploads accept SVG as well as JPEG, PNG and WebP. The image route serves files with a sandboxing `Content-Security-Policy`.
+
+`Issue.designJson` holds one of two formats (see `src/lib/issue-design.ts`):
+- **CE.SDK document** (`format: "cesdk"`), written by the editor. It contains the opaque `engine.scene.saveToString()` result plus a `pages` manifest of page IDs and linked elements derived from block metadata. The server validates the manifest without decoding the scene.
+- **Layout specification** with simple `text`/`image` elements. AI layout generation (`POST /api/issues/[id]/generate-layout`) produces this format as a Designer task result. It is written to the issue only when someone chooses **Apply to issue** on the task page (the redeploy endpoint). Designs saved before the CE.SDK migration (Polotno JSON) also use it. The editor converts a layout specification into a CE.SDK scene when the issue is opened, and the next save stores it as a CE.SDK document; no data migration is required.
+
+The migration `20261012145000_issue_combined_design` removed `IssuePage.designJson`. Do not restore per-page persistence unless the data model and migration strategy are intentionally redesigned.
+
+`PATCH /api/issues/[id]/design` is the aggregate persistence endpoint and only accepts the CE.SDK document format. It validates:
+- authentication, role, and issue scope;
+- JSON size (5 MB maximum) and shape;
+- page IDs and cover/back-cover placement;
+- that linked articles and ads are available within the Issue's publication.
+
+It reconciles IssuePage rows in canvas order and rebuilds IssuePagePlacement records transactionally. New pages use their metadata IDs as database IDs. `GET /api/issues/[id]/images/[filename]` serves issue assets after checking issue access. Preserve the invariant that the cover remains first, the back cover remains last, and at least one inner page remains.
+
+CE.SDK runs without a license key in evaluation mode, which watermarks exports. `NEXT_PUBLIC_CESDK_LICENSE` is optional; do not add a hard license gate that prevents the local prototype from loading. The editor currently uses CE.SDK's default asset location, the IMG.LY CDN, for engine WASM, fonts, UI assets, and default libraries (typefaces, shapes, stickers, filters). IMG.LY documents that location as intended for development only. For self-hosting, download the `imgly-assets.zip` archive that matches the installed SDK version and serve it from the app, for example `public/cesdk/<version>/`. Then pass that location as `baseURL` to `CreativeEditorSDK.create` and as `baseURL` to each asset-source plugin.
+
+## Tasks (long-running operations)
+
+Every operation that is not resolved instantly is a **Task**: agent jobs (Designer layouts, Creative image enhancement and ad generation, Copywriter reviews, Assistant clarification drafts, Marketer pitches, automatic invites), business imports, and business onboarding (reachout). Follow this architecture for any new long-running feature:
+
+- **Never block the UI.** The launch endpoint validates the request, records the task, runs the work in the background with `after()` from `next/server`, and responds immediately (HTTP 202) with the registry task `{ task: { id, name } }` (or `{ tasks: [...] }`). Do not await model calls in the request, and do not show spinner modals or result dialogs. A dialog that only collects options before launch is fine.
+- **Announce, don't wait.** Client launchers call `announceTaskStarted()` from `src/lib/task-events.ts`, or use the `useTaskLauncher()` hook in `src/components/use-task-launcher.ts`. `TaskNotifier` (mounted in the workspace layout) shows a "started" toast. It polls `GET /api/tasks/notifications` and shows a notification at the top of the screen when the user's task succeeds, fails, or stops. Clicking it opens `/tasks/[id]`. Each completion is announced once, because the endpoint atomically sets `Task.notifiedAt`.
+- **One list.** `/tasks` (the **Tasks** link at the bottom of the sidebar) lists tasks sortable by name, date, agent type (may be None), and status. Statuses are labelled Queued, Ongoing, Success, Error, and Stopped (`src/lib/task-status.ts`). Administrators see all tasks; other users see the tasks they launched (`getTaskScope` in `src/lib/tasks.ts`).
+- **Show the agent.** Every task creation screen that involves an agent or sub-agent renders `<AgentBadge agentSlug="…" />` (`src/components/agent-badge.tsx`) with the agent's picture and name. It links to `/tasks?agent=<id>` (plus `&subAgent=<id>` for a sub-agent), which lists only that agent's tasks. Identities come from `GET /api/agents/directory`; picture GET routes are readable by any signed-in user.
+- **One page per template.** `/tasks/[id]` chooses a template with `getTaskTemplate()`:
+  - `layout`: page previews plus **Apply to issue**.
+  - `creative`: original versus result, with Discard / Overwrite / Keep / Iterate.
+  - `email-draft`: the draft plus **Send email** (administrators).
+  - `review`: editorial feedback.
+  - `business-import` and `reachout`: results of those jobs.
+  - `generic`: everything else.
+
+  Agent tasks also show their step log. Results stay drafts or proposals until a person acts. For example, layout generation no longer writes `Issue.designJson`; the layout is applied only from the task page. Stop and delete are generic: `PATCH`/`DELETE /api/tasks/[id]`.
+
+**Data model.** `Task` (numeric ID, used for routes) is a registry over the backing tables `AgentTask`, `BusinessImportTask`, and `ReachoutTask`. Postgres triggers create and update the `Task` row whenever a backing row is inserted or updated. Those triggers are defined in migration `20261014150000_task_registry`, and they cover writes from schedulers and the IMAP poller as well as request handlers. Deleting the backing row cascades to the registry row. Application code only reads `Task` and sets `notifiedAt`; change status on the backing record.
+
+**Adding a task type.**
+- For an agent job, call `launchAgentTask({ agentId, label, triggeredById, steps, work })` from `src/lib/agent-task-runner.ts`. `work` receives `log()` for live progress and returns the result JSON; a thrown error marks the task Error. A task stopped by a user keeps its Stopped status.
+- Then add a template branch in `getTaskTemplate()` and a view on `/tasks/[id]` if the result needs one.
+- A job that needs its own table also needs a new `TaskSource` value, a foreign-key column on `Task`, and a sync trigger in a new migration.
+
+Background work runs inside the Next.js server process. A task still running when the server restarts stays Ongoing until someone stops it.
 
 ## Migrations and validation
 
