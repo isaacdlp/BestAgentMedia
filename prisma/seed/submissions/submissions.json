@@ -1,0 +1,107 @@
+[
+  {
+    "id": "seed-boca-story-01",
+    "title": "Neighbors Turn a Quiet Shoreline Into a Cleaner Place for Everyone",
+    "storyType": "community",
+    "submitterEmail": "contributor.one@example.test",
+    "submitterPhone": "+1 561 555 0101",
+    "body": "When early-morning walkers along the Boca Raton shoreline began noticing plastic bottles and fishing line collecting near the dunes, a small group of neighbors decided to do something about it. Their first cleanup brought eight volunteers; by the third Saturday, families, students, and longtime residents were arriving with reusable gloves, buckets, and a shared plan for keeping the beach welcoming.\n\nThe group now meets monthly, separating recyclables from waste and recording the most common items they find so nearby visitors can learn how to prevent litter. Local residents also helped place a simple reminder board near the path and organized a rotating schedule to check the area after busy weekends. The effort is practical rather than complicated: show up, leave the shoreline better than you found it, and invite someone new next time.\n\nFor organizer Olivia Martinez, the best result is seeing children explain the project to their parents. She hopes more neighbors will join the next gathering and help protect the coastal spaces that bring the community together.",
+    "status": "IN_REVIEW",
+    "images": [
+      {
+        "fileName": "seed-boca-story-1-1.png",
+        "originalName": "Boca neighbors organize a shoreline cleanup.png",
+        "mimeType": "image/png"
+      },
+      {
+        "fileName": "seed-boca-story-1-2.png",
+        "originalName": "Volunteers collect litter along the beach.png",
+        "mimeType": "image/png"
+      }
+    ]
+  },
+  {
+    "id": "seed-boca-story-02",
+    "title": "A Backyard Garden Grows Fresh Food and New Friendships",
+    "storyType": "community",
+    "submitterEmail": "contributor.two@example.test",
+    "submitterPhone": "+1 561 555 0102",
+    "body": "A few raised beds behind a Boca neighborhood clubhouse have become a meeting place for residents who might otherwise only wave as they pass. The garden began with a handful of families sharing spare seedlings. Today, volunteers tend herbs, tomatoes, peppers, and pollinator-friendly flowers, with simple signs explaining which plants are ready to pick and how each bed is cared for.\n\nThe weekly garden hour welcomes every level of experience. Children help water the seedlings, experienced gardeners share seasonal advice, and newcomers can take home a small bundle of produce after pitching in. Neighbors have also started a seed exchange, making it easier for residents to try varieties suited to South Florida's warm growing season.\n\nJames Wilson says the harvest matters, but the conversations matter just as much. The project has connected new residents with longtime neighbors and given families an easy way to spend time outdoors together. The volunteers are planning another planting day and invite anyone curious about gardening to stop by, ask questions, and get their hands in the soil.",
+    "status": "NEW",
+    "images": [
+      {
+        "fileName": "seed-boca-story-2-1.png",
+        "originalName": "Neighbors share the community garden harvest.png",
+        "mimeType": "image/png"
+      },
+      {
+        "fileName": "seed-boca-story-2-2.png",
+        "originalName": "Volunteers tend a neighborhood vegetable bed.png",
+        "mimeType": "image/png"
+      }
+    ]
+  },
+  {
+    "id": "seed-boca-story-03",
+    "title": "Young Boca Players Learn Teamwork One Practice at a Time",
+    "storyType": "sports",
+    "submitterEmail": "contributor.one@example.test",
+    "submitterPhone": "+1 561 555 0101",
+    "body": "On weekday afternoons, a neighborhood soccer field fills with the sound of cleats on grass, encouraging shouts, and parents cheering from the sidelines. The youth team welcomes players with a wide range of experience, focusing practices on fundamentals, confidence, and the kind of teamwork that carries beyond the final whistle.\n\nCoaches keep drills short and active so every child gets time with the ball. Older players often demonstrate a move for younger teammates, while families take turns bringing water and helping set up cones. The season's most memorable moments have not all been goals: one player stayed after practice to help a teammate learn a new pass, and the whole group celebrated when it finally clicked.\n\nVolunteer coach James Wilson says the team is proud of its progress, but even prouder of the way players look out for each other. New participants are welcome to attend a practice with a parent and meet the coaches. The group hopes to grow its roster while keeping the friendly, supportive atmosphere that makes every player feel part of the team.",
+    "status": "NEW",
+    "images": [
+      {
+        "fileName": "seed-boca-story-3-1.png",
+        "originalName": "Boca youth soccer players celebrate together.png",
+        "mimeType": "image/png"
+      },
+      {
+        "fileName": "seed-boca-story-3-2.png",
+        "originalName": "Young players practice soccer skills.png",
+        "mimeType": "image/png"
+      }
+    ]
+  },
+  {
+    "id": "seed-boca-story-04",
+    "title": "Rescue Pets Find a Second Chance With Help From Local Families",
+    "storyType": "pet",
+    "submitterEmail": "contributor.two@example.test",
+    "submitterPhone": "+1 561 555 0102",
+    "body": "A Boca-area volunteer network is helping shelter pets make the transition from kennel to home through patient foster care and practical support for adopters. Volunteers provide a calm place for animals to rest, learn household routines, and show their personalities while the group shares adoption profiles with neighbors who are ready to welcome a new companion.\n\nThe network also collects unopened food, leashes, carriers, and washable bedding for families fostering pets. At recent meet-and-greet afternoons, children practiced approaching animals gently while volunteers talked through everyday care, exercise, and the importance of giving a newly adopted pet time to settle in. The goal is to make responsible adoption feel supported rather than overwhelming.\n\nJames Wilson, who helps coordinate supply drop-offs, says each successful match is a community effort: a foster family, a volunteer who shares the story, and an adopter willing to make room at home. Residents interested in fostering or donating supplies can contact the team to learn what is most needed this month.",
+    "status": "NEW",
+    "images": [
+      {
+        "fileName": "seed-boca-story-4-1.png",
+        "originalName": "A local family welcomes a rescued pet.png",
+        "mimeType": "image/png"
+      },
+      {
+        "fileName": "seed-boca-story-4-2.png",
+        "originalName": "Volunteers support a pet adoption event.png",
+        "mimeType": "image/png"
+      }
+    ]
+  },
+  {
+    "id": "seed-boca-story-05",
+    "title": "A Neighborhood Arts Night Brings Local Talent Into the Spotlight",
+    "storyType": "event",
+    "submitterEmail": "contributor.one@example.test",
+    "submitterPhone": "+1 561 555 0101",
+    "body": "What started as an informal idea among a few creative neighbors has become an evening where Boca residents can meet local artists, hear live music, and try a hands-on activity together. The community arts night sets up small display tables for paintings, photography, handmade crafts, and student work, with space for visitors to talk directly with the people who made it.\n\nA volunteer team keeps the event relaxed and welcoming. Musicians play short acoustic sets, local makers share how they approach their craft, and children can join a supervised drawing table. Nearby residents contribute chairs, refreshments, and directions so guests of all ages can enjoy the evening at their own pace.\n\nOlivia Martinez says the event is less about having a perfect gallery and more about making it easy for neighbors to share what they love. The next gathering will include a community mural panel that visitors can add to throughout the evening. Organizers invite local creators and curious residents to come by, bring a friend, and celebrate the many ways people express themselves.",
+    "status": "NEW",
+    "images": [
+      {
+        "fileName": "seed-boca-story-5-1.png",
+        "originalName": "Neighbors enjoy a local Boca arts night.png",
+        "mimeType": "image/png"
+      },
+      {
+        "fileName": "seed-boca-story-5-2.png",
+        "originalName": "Local artists share their work with the community.png",
+        "mimeType": "image/png"
+      }
+    ]
+  }
+]

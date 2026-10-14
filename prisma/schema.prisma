@@ -1,0 +1,560 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  PUBLISHER
+  CONTRIBUTOR
+}
+
+enum SubmissionStatus {
+  NEW
+  IN_REVIEW
+  NEEDS_INFORMATION
+  ACCEPTED
+  DECLINED
+}
+
+enum AdvertisementStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  APPROVED
+  PUBLISHED
+  DECLINED
+}
+
+enum IssueStatus {
+  DRAFT
+  ACCEPTED
+  PUBLISHED
+}
+
+enum ArticleStatus {
+  DRAFT
+  ACCEPTED
+  PUBLISHED
+}
+
+enum IssuePageType {
+  COVER
+  INNER
+  BACK_COVER
+}
+
+enum BusinessImportTaskStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  STOPPED
+}
+
+enum ReachoutTaskStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  STOPPED
+}
+
+enum AgentTaskStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  STOPPED
+}
+
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+model User {
+  id                  String                 @id @default(cuid())
+  email               String                 @unique
+  name                String
+  surname             String                 @default("")
+  phone               String?
+  passwordHash        String
+  authVersion         Int                    @default(0)
+  role                UserRole?
+  active              Boolean                @default(true)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  publicationAccess   PublicationPublisher[]
+  submissions         ContentSubmission[]    @relation("SubmittedContent")
+  createdArticles     Article[]              @relation("ArticleAuthor")
+  business            Business?
+  businessImportTasks BusinessImportTask[]
+  agentTasks          AgentTask[]
+  reachoutTasks       ReachoutTask[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model Publication {
+  id              Int                        @id @default(autoincrement())
+  name            String                     @unique
+  slug            String                     @unique
+  coverImagePath  String?
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  publisherAccess PublicationPublisher[]
+  submissions     ContentSubmission[]
+  advertisements  AdvertisementPublication[]
+  issues          Issue[]
+  articles        ArticlePublication[]
+  zipCodes        ZipCode[]
+}
+
+model ZipCode {
+  id                      Int           @id @default(autoincrement())
+  code                    String        @unique
+  boundaryGeometry        Json?         @db.JsonB
+  centroidLatitude        Float?
+  centroidLongitude       Float?
+  boundaryVintage         Int?
+  estimatedPopulation     Int?
+  populationMarginOfError Int?
+  populationVintage       Int?
+  publications            Publication[]
+}
+
+model PublicationPublisher {
+  userId        String
+  publicationId Int
+  assignedAt    DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, publicationId])
+  @@index([publicationId])
+}
+
+model ContentSubmission {
+  id                String            @id @default(cuid())
+  title             String
+  submitterName     String?
+  submitterEmail    String?
+  submitterPhone    String?
+  postalCode        String?
+  storyType         String?
+  body              String
+  status            SubmissionStatus  @default(NEW)
+  publicationId     Int
+  submittedByUserId String?
+  businessId        Int?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  publication       Publication       @relation(fields: [publicationId], references: [id], onDelete: Restrict)
+  submittedBy       User?             @relation("SubmittedContent", fields: [submittedByUserId], references: [id], onDelete: SetNull)
+  business          Business?         @relation("SubmissionBusiness", fields: [businessId], references: [id], onDelete: SetNull)
+  images            SubmissionImage[]
+  article           Article?          @relation("SubmissionArticle")
+
+  @@index([publicationId, status])
+  @@index([submittedByUserId, createdAt])
+  @@index([businessId])
+}
+
+model SubmissionImage {
+  id           String            @id @default(cuid())
+  submissionId String
+  fileName     String            @unique
+  originalName String
+  mimeType     String
+  size         Int
+  createdAt    DateTime          @default(now())
+  submission   ContentSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId, createdAt])
+}
+
+model ReachoutTask {
+  id                 String             @id @default(cuid())
+  status             ReachoutTaskStatus @default(PENDING)
+  message            String             @default("")
+  autoTriggered      Boolean            @default(false)
+  businessId         Int
+  subAgentId         Int?
+  threadId           String?            @unique
+  initialEmailSentAt DateTime?
+  reminder1SentAt    DateTime?
+  reminder2SentAt    DateTime?
+  createdByUserId    String?
+  createdAt          DateTime           @default(now())
+  startedAt          DateTime?
+  finishedAt         DateTime?
+  updatedAt          DateTime           @updatedAt
+  business           Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  subAgent           SubAgent?          @relation(fields: [subAgentId], references: [id], onDelete: SetNull)
+  thread             EmailThread?       @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  createdBy          User?              @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([status, createdAt])
+}
+
+model Business {
+  id                Int                  @id @default(autoincrement())
+  name              String
+  ownerUserId       String?              @unique
+  importTaskId      String?
+  sourceProvider    String               @default("MANUAL")
+  externalId        String?              @unique
+  sourceQuery       String?
+  primaryCategory   String?
+  description       String?
+  categories        String[]             @default([])
+  addressLabel      String?
+  houseNumber       String?
+  street            String?
+  city              String?
+  state             String?
+  stateCode         String?
+  postalCode        String?
+  countryCode       String?
+  latitude          Float?
+  longitude         Float?
+  distanceMeters    Int?
+  phone             String?
+  email             String?
+  website           String?
+  sourceRetrievedAt DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  owner             User?                @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+  importTask        BusinessImportTask?  @relation(fields: [importTaskId], references: [id], onDelete: SetNull)
+  ads               Advertisement[]
+  reachoutTasks     ReachoutTask[]
+  claimTokens       BusinessClaimToken[]
+  submissions       ContentSubmission[]  @relation("SubmissionBusiness")
+  articles          Article[]            @relation("ArticleBusiness")
+  images            BusinessImage[]
+
+  @@index([postalCode])
+  @@index([city, stateCode])
+  @@index([sourceProvider])
+  @@index([importTaskId])
+}
+
+model BusinessImportTask {
+  id               String                   @id @default(cuid())
+  sourceProvider   String
+  zipCode          String
+  categories       String[]
+  newBusinessLimit Int
+  status           BusinessImportTaskStatus @default(RUNNING)
+  message          String
+  createdAt        DateTime                 @default(now())
+  startedAt        DateTime                 @default(now())
+  finishedAt       DateTime?
+  updatedAt        DateTime                 @updatedAt
+  createdByUserId  String
+  createdBy        User                     @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  businesses       Business[]
+
+  @@index([startedAt])
+  @@index([status, startedAt])
+}
+
+model Advertisement {
+  id                   String                     @id @default(cuid())
+  title                String
+  description          String?
+  cta                  String?
+  status               AdvertisementStatus        @default(DRAFT)
+  businessId           Int
+  creativeFileName     String?                    @unique
+  creativeMimeType     String?
+  creativeSize         Int?
+  creativeOriginalName String?
+  creativeImageId      String?
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  business             Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  publications         AdvertisementPublication[]
+  placements           IssuePagePlacement[]
+  images               AdImage[]
+
+  @@index([status, updatedAt])
+  @@index([businessId, createdAt])
+}
+
+model AdvertisementPublication {
+  advertisementId String
+  publicationId   Int
+  advertisement   Advertisement @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
+  publication     Publication   @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@id([advertisementId, publicationId])
+  @@index([publicationId])
+}
+
+model AdImage {
+  id              String        @id @default(cuid())
+  advertisementId String
+  fileName        String        @unique
+  originalName    String
+  mimeType        String
+  size            Int
+  position        Int           @default(0)
+  createdAt       DateTime      @default(now())
+  advertisement   Advertisement @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
+
+  @@index([advertisementId, position])
+}
+
+model BusinessImage {
+  id           String   @id @default(cuid())
+  businessId   Int
+  fileName     String   @unique
+  originalName String
+  mimeType     String
+  size         Int
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, position])
+}
+
+model Issue {
+  id              String      @id @default(cuid())
+  publicationId   Int
+  publicationDate DateTime    @db.Date
+  status          IssueStatus @default(DRAFT)
+  designJson      Json?       @db.JsonB
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  publication     Publication @relation(fields: [publicationId], references: [id], onDelete: Restrict)
+  pages           IssuePage[]
+  agentTasks      AgentTask[]
+
+  @@unique([publicationId, publicationDate])
+  @@index([publicationId, status, publicationDate])
+}
+
+model IssuePage {
+  id         String               @id @default(cuid())
+  issueId    String
+  pageNumber Int
+  type       IssuePageType
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+  issue      Issue                @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  placements IssuePagePlacement[]
+
+  @@unique([issueId, pageNumber])
+  @@index([issueId, type])
+}
+
+model IssuePagePlacement {
+  id              String         @id @default(cuid())
+  pageId          String
+  elementId       String
+  articleId       String?
+  advertisementId String?
+  createdAt       DateTime       @default(now())
+  page            IssuePage      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  article         Article?       @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  advertisement   Advertisement? @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, elementId])
+  @@index([articleId])
+  @@index([advertisementId])
+}
+
+model Article {
+  id                 String               @id @default(cuid())
+  title              String
+  body               String
+  status             ArticleStatus        @default(DRAFT)
+  sourceSubmissionId String?              @unique
+  createdByUserId    String?
+  businessId         Int?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  sourceSubmission   ContentSubmission?   @relation("SubmissionArticle", fields: [sourceSubmissionId], references: [id], onDelete: SetNull)
+  createdBy          User?                @relation("ArticleAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  business           Business?            @relation("ArticleBusiness", fields: [businessId], references: [id], onDelete: SetNull)
+  publications       ArticlePublication[]
+  images             ArticleImage[]
+  placements         IssuePagePlacement[]
+
+  @@index([status, updatedAt])
+  @@index([createdByUserId, updatedAt])
+  @@index([businessId])
+}
+
+model ArticlePublication {
+  articleId     String
+  publicationId Int
+  article       Article     @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, publicationId])
+  @@index([publicationId])
+}
+
+model ArticleImage {
+  id           String   @id @default(cuid())
+  articleId    String
+  fileName     String   @unique
+  originalName String
+  caption      String   @default("")
+  mimeType     String
+  size         Int
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+  article      Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, position])
+}
+
+model BusinessClaimToken {
+  id         String    @id @default(cuid())
+  token      String    @unique @default(cuid())
+  businessId Int
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+model PasswordResetThrottle {
+  emailHash       String   @id
+  windowStartedAt DateTime @default(now())
+  requestCount    Int      @default(1)
+
+  @@index([windowStartedAt])
+}
+
+model Agent {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique
+  slug        String      @unique
+  description String
+  enabled     Boolean     @default(true)
+  settings    Json        @default("{}") @db.JsonB
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  tasks       AgentTask[]
+  subAgents   SubAgent[]
+}
+
+model SubAgent {
+  id            Int            @id @default(autoincrement())
+  agentId       Int
+  name          String
+  soul          String         @db.Text
+  picturePath   String?
+  cellNumber    String?
+  config        Json           @default("{}") @db.JsonB
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  agent         Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  tasks         AgentTask[]
+  emailThreads  EmailThread[]
+  reachoutTasks ReachoutTask[]
+
+  @@index([agentId])
+}
+
+model AgentTask {
+  id            String          @id @default(cuid())
+  agentId       Int
+  subAgentId    Int?
+  status        AgentTaskStatus @default(PENDING)
+  label         String
+  steps         Json            @default("[]") @db.JsonB
+  result        Json?           @db.JsonB
+  error         String?
+  issueId       String?
+  triggeredById String?
+  createdAt     DateTime        @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+  agent         Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  subAgent      SubAgent?       @relation(fields: [subAgentId], references: [id], onDelete: SetNull)
+  issue         Issue?          @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  triggeredBy   User?           @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+  emailThreads  EmailThread[]
+
+  @@index([agentId, createdAt])
+  @@index([status, createdAt])
+  @@index([issueId])
+  @@index([subAgentId])
+}
+
+model EmailThread {
+  id           String         @id @default(cuid())
+  subAgentId   Int
+  taskId       String?
+  toEmail      String
+  toName       String?
+  subject      String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  subAgent     SubAgent       @relation(fields: [subAgentId], references: [id], onDelete: Cascade)
+  task         AgentTask?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  messages     EmailMessage[]
+  reachoutTask ReachoutTask?
+
+  @@index([subAgentId, createdAt])
+  @@index([taskId])
+}
+
+model EmailMessage {
+  id          String            @id @default(cuid())
+  threadId    String
+  messageId   String            @unique
+  inReplyTo   String?
+  direction   MessageDirection
+  fromEmail   String
+  toEmail     String
+  subject     String
+  bodyText    String            @db.Text
+  bodyHtml    String?           @db.Text
+  sentAt      DateTime?
+  receivedAt  DateTime?
+  createdAt   DateTime          @default(now())
+  thread      EmailThread       @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  attachments EmailAttachment[]
+
+  @@index([threadId, createdAt])
+  @@index([inReplyTo])
+}
+
+model EmailAttachment {
+  id             String       @id @default(cuid())
+  emailMessageId String
+  fileName       String       @unique
+  originalName   String
+  mimeType       String
+  size           Int
+  createdAt      DateTime     @default(now())
+  message        EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@index([emailMessageId])
+}

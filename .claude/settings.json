@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"require\\('@paralleldrive/cuid2'\\)\")",
+      "Bash(mkdir -p \"C:/Users/Isaac/Documents/Code/BestAgentMedia/src/app/api/agents/[id]/sub-agents\")",
+      "Bash(mkdir -p \"C:/Users/Isaac/Documents/Code/BestAgentMedia/src/app/api/agents/[id]/sub-agents/[subId]\")",
+      "Bash(mkdir -p \"C:/Users/Isaac/Documents/Code/BestAgentMedia/src/app/api/agents/[id]/sub-agents/[subId]/picture\")",
+      "Bash(mkdir -p \"C:/Users/Isaac/Documents/Code/BestAgentMedia/src/app/api/agents/[id]/sub-agents/[subId]/check-inbox\")",
+      "Bash(mkdir -p \"C:/Users/Isaac/Documents/Code/BestAgentMedia/src/app/api/agents/[id]/tasks/[taskId]/send\")",
+      "Bash(mkdir -p \"C:/Users/Isaac/Documents/Code/BestAgentMedia/src/app/api/sub-agents/[subId]/threads/[threadId]\" && echo done)",
+      "Bash(mkdir -p \"C:/Users/Isaac/Documents/Code/BestAgentMedia/src/app/\\(workspace\\)/agents/[id]/sub-agents/[subId]\" && echo done)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(mkdir -p \"c:\\\\Users\\\\Isaac\\\\Documents\\\\Code\\\\BestAgentMedia\\\\src\\\\app\\\\api\\\\submissions\\\\[id]\\\\review\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\Isaac\\\\Documents\\\\Code\\\\BestAgentMedia\\\\src\\\\app\\\\api\\\\articles\\\\[id]\\\\review\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\Isaac\\\\Documents\\\\Code\\\\BestAgentMedia\\\\src\\\\app\\\\api\\\\businesses\\\\[id]\\\\pitch\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Isaac\\Documents\\Code\\BestAgentMedia\\src\\app\\api\\agents\\[id]\\tasks\\[taskId]",
+      "C:\\Users\\Isaac\\Documents\\Code\\BestAgentMedia\\src\\app\\api\\sub-agents\\[subId]\\threads",
+      "C:\\Users\\Isaac\\Documents\\Code\\BestAgentMedia\\src\\app\\(workspace)\\agents\\[id]\\sub-agents",
+      "c:\\Users\\Isaac\\Documents\\Code\\BestAgentMedia\\src\\app\\api\\submissions\\[id]",
+      "C:\\Users\\Isaac\\Documents\\Code\\BestAgentMedia\\src\\app\\api\\articles\\[id]",
+      "C:\\Users\\Isaac\\Documents\\Code\\BestAgentMedia\\src\\app\\api\\businesses\\[id]"
+    ]
+  }
+}

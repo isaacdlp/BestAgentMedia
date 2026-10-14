@@ -1,0 +1,51 @@
+{
+  "name": "bestagentmedia",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "db:generate": "prisma generate",
+    "db:refresh-census-seed": "tsx prisma/refresh-census-seed.ts",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy && tsx prisma/deploy-publications.ts",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@prisma/client": "6.12.0",
+    "bcryptjs": "^3.0.2",
+    "imapflow": "^2.4.0",
+    "iron-session": "^8.0.4",
+    "leaflet": "^1.9.4",
+    "mailparser": "^3.9.38",
+    "next": "^16.4.0",
+    "nodemailer": "^10.1.0",
+    "polotno": "^4.0.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-leaflet": "^5.0.0",
+    "sharp": "^0.35.5",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/leaflet": "^1.9.22",
+    "@types/mailparser": "^3.9.0",
+    "@types/node": "^22.18.6",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "eslint": "^9.36.0",
+    "prisma": "6.12.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.56.0"
+  }
+}
