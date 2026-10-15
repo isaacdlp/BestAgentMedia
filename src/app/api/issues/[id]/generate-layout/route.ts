@@ -95,7 +95,7 @@ export async function POST(
           where: {
             AND: [
               articleScope,
-              { publications: { some: { publicationId: issue.publicationId } } },
+              { issues: { some: { issueId: issue.id } } },
             ],
           },
           orderBy: { title: "asc" },
@@ -108,7 +108,7 @@ export async function POST(
         }),
         prisma.advertisement.findMany({
           where: {
-            publications: { some: { publicationId: issue.publicationId } },
+            issues: { some: { issueId: issue.id } },
             status: { not: "DECLINED" },
           },
           orderBy: { title: "asc" },

@@ -3,34 +3,42 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { createAdvertisement } from "@/app/actions/ads";
+import { AdStyleField, useAdPricing, type AdStyleOption } from "@/components/ad-style-field";
 
 interface Business {
   id: number;
   name: string;
   primaryCategory: string | null;
 }
-interface Publication {
-  id: number;
+interface Issue {
+  id: string;
   name: string;
+  issueName: string;
+  publicationId: number;
 }
 
 export function NewAdForm({
   businesses,
-  publications,
+  issues,
+  styles,
 }: {
   businesses: Business[];
-  publications: Publication[];
+  issues: Issue[];
+  styles: AdStyleOption[];
 }) {
+  const [name, setName] = useState("");
+  const [nameEdited, setNameEdited] = useState(false);
   const [bizQuery, setBizQuery] = useState("");
   const [bizOpen, setBizOpen] = useState(false);
   const [selectedBiz, setSelectedBiz] = useState<Business | null>(null);
-  const [pubQuery, setPubQuery] = useState("");
-  const [pubOpen, setPubOpen] = useState(false);
-  const [selectedPubs, setSelectedPubs] = useState<Publication[]>([]);
+  const [issueQuery, setIssueQuery] = useState("");
+  const [issueOpen, setIssueOpen] = useState(false);
+  const [selectedIssues, setSelectedIssues] = useState<Issue[]>([]);
+  const pricing = useAdPricing({ options: styles, issues: selectedIssues });
   const bizRef = useRef<HTMLDivElement>(null);
   const bizInputRef = useRef<HTMLInputElement>(null);
-  const pubRef = useRef<HTMLDivElement>(null);
-  const pubInputRef = useRef<HTMLInputElement>(null);
+  const issueRef = useRef<HTMLDivElement>(null);
+  const issueInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -38,9 +46,9 @@ export function NewAdForm({
         setBizOpen(false);
         if (!selectedBiz) setBizQuery("");
       }
-      if (pubRef.current && !pubRef.current.contains(e.target as Node)) {
-        setPubOpen(false);
-        setPubQuery("");
+      if (issueRef.current && !issueRef.current.contains(e.target as Node)) {
+        setIssueOpen(false);
+        setIssueQuery("");
       }
     }
     document.addEventListener("mousedown", handler);
@@ -55,14 +63,24 @@ export function NewAdForm({
     );
   });
 
-  const selectedPubIds = new Set(selectedPubs.map((p) => p.id));
-  const filteredPubs = pubQuery
-    ? publications.filter(
+  const selectedIssueIds = new Set(selectedIssues.map((p) => p.id));
+  const filteredIssues = issueQuery
+    ? issues.filter(
         (p) =>
-          !selectedPubIds.has(p.id) &&
-          p.name.toLowerCase().includes(pubQuery.toLowerCase())
+          !selectedIssueIds.has(p.id) &&
+          p.name.toLowerCase().includes(issueQuery.toLowerCase())
       )
     : [];
+
+  // Keep the name in sync with the selections until the user edits it by hand.
+  useEffect(() => {
+    if (nameEdited) return;
+    const parts: string[] = [];
+    if (selectedBiz) parts.push(selectedBiz.name);
+    if (selectedIssues.length === 1) parts.push(selectedIssues[0].issueName);
+    else if (selectedIssues.length > 1) parts.push("Multi Issue");
+    setName(parts.join(" - "));
+  }, [nameEdited, selectedBiz, selectedIssues]);
 
   function selectBiz(b: Business) {
     setSelectedBiz(b);
@@ -77,35 +95,20 @@ export function NewAdForm({
     setTimeout(() => bizInputRef.current?.focus(), 0);
   }
 
-  function addPub(p: Publication) {
-    setSelectedPubs((prev) => [...prev, p]);
-    setPubQuery("");
-    pubInputRef.current?.focus();
+  function addIssue(p: Issue) {
+    setSelectedIssues((prev) => [...prev, p]);
+    setIssueQuery("");
+    issueInputRef.current?.focus();
   }
 
-  function removePub(id: number) {
-    setSelectedPubs((prev) => prev.filter((p) => p.id !== id));
+  function removeIssue(id: string) {
+    setSelectedIssues((prev) => prev.filter((p) => p.id !== id));
   }
 
   return (
     <form action={createAdvertisement} className="business-form">
       <div className="business-form-grid">
-        <label className="business-field business-field-wide">
-          <span>Ad name <span aria-hidden="true">*</span></span>
-          <input maxLength={200} name="title" required />
-        </label>
-
-        <label className="business-field business-field-wide">
-          <span>Description</span>
-          <textarea name="description" rows={3} placeholder="What this ad is about..." />
-        </label>
-
-        <label className="business-field business-field-wide">
-          <span>Call to action URL</span>
-          <input name="cta" type="url" placeholder="https://example.com" />
-        </label>
-
-        <div className="business-field" ref={bizRef}>
+        <div className="business-field business-field-wide" ref={bizRef}>
           <span>Business <span aria-hidden="true">*</span></span>
           <div className="search-select">
             <div className="search-select-input-wrap">
@@ -169,22 +172,22 @@ export function NewAdForm({
           />
         </div>
 
-        <div className="business-field business-field-wide" ref={pubRef}>
-          <span>Publications <span aria-hidden="true">*</span></span>
-          {selectedPubs.map((p) => (
-            <input key={p.id} type="hidden" name="publicationIds" value={p.id} />
+        <div className="business-field business-field-wide" ref={issueRef}>
+          <span>Issues <span className="muted">(optional for now — required before publishing)</span></span>
+          {selectedIssues.map((p) => (
+            <input key={p.id} type="hidden" name="issueIds" value={p.id} />
           ))}
-          {publications.length ? (
+          {issues.length ? (
             <div className="search-select">
-              {selectedPubs.length > 0 && (
+              {selectedIssues.length > 0 && (
                 <div className="search-select-tags">
-                  {selectedPubs.map((p) => (
+                  {selectedIssues.map((p) => (
                     <span key={p.id} className="search-select-tag">
                       {p.name}
                       <button
                         type="button"
                         className="search-select-tag-remove"
-                        onClick={() => removePub(p.id)}
+                        onClick={() => removeIssue(p.id)}
                         aria-label={`Remove ${p.name}`}
                       >
                         ✕
@@ -195,34 +198,34 @@ export function NewAdForm({
               )}
               <div className="search-select-input-wrap">
                 <input
-                  ref={pubInputRef}
+                  ref={issueInputRef}
                   type="text"
-                  placeholder="Search publications…"
+                  placeholder="Search issues…"
                   autoComplete="off"
-                  value={pubQuery}
+                  value={issueQuery}
                   onChange={(e) => {
-                    setPubQuery(e.target.value);
-                    setPubOpen(true);
+                    setIssueQuery(e.target.value);
+                    setIssueOpen(true);
                   }}
-                  onFocus={() => { if (pubQuery) setPubOpen(true); }}
+                  onFocus={() => { if (issueQuery) setIssueOpen(true); }}
                   aria-haspopup="listbox"
-                  aria-expanded={pubOpen}
+                  aria-expanded={issueOpen}
                 />
-                {pubQuery && (
+                {issueQuery && (
                   <button
                     type="button"
                     className="search-select-clear"
-                    onClick={() => { setPubQuery(""); setPubOpen(false); pubInputRef.current?.focus(); }}
+                    onClick={() => { setIssueQuery(""); setIssueOpen(false); issueInputRef.current?.focus(); }}
                     aria-label="Clear search"
                   >
                     ✕
                   </button>
                 )}
               </div>
-              {pubOpen && pubQuery && (
+              {issueOpen && issueQuery && (
                 <ul className="search-select-dropdown" role="listbox">
-                  {filteredPubs.length ? (
-                    filteredPubs.map((p) => (
+                  {filteredIssues.length ? (
+                    filteredIssues.map((p) => (
                       <li
                         key={p.id}
                         role="option"
@@ -230,26 +233,40 @@ export function NewAdForm({
                         className="search-select-option"
                         onMouseDown={(e) => {
                           e.preventDefault();
-                          addPub(p);
+                          addIssue(p);
                         }}
                       >
                         <strong>{p.name}</strong>
                       </li>
                     ))
                   ) : (
-                    <li className="search-select-none">No publications match &ldquo;{pubQuery}&rdquo;</li>
+                    <li className="search-select-none">No issues match &ldquo;{issueQuery}&rdquo;</li>
                   )}
                 </ul>
               )}
             </div>
           ) : (
-            <p className="muted">No publications available.</p>
+            <p className="muted">No issues available. Create an issue first.</p>
           )}
         </div>
+        <AdStyleField issues={selectedIssues} options={styles} pricing={pricing} />
+        <label className="business-field business-field-wide">
+          <span>Name <span aria-hidden="true">*</span></span>
+          <input
+            maxLength={200}
+            name="title"
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameEdited(e.target.value !== "");
+            }}
+            required
+            value={name}
+          />
+        </label>
       </div>
 
       <div className="business-form-footer">
-        <p className="muted">Ad status will start as Draft.</p>
+        <p className="muted">The ad will start as Draft. The name fills in from the business and issue; edit it if you prefer.</p>
         <div className="business-form-actions">
           <Link className="text-link" href="/ads">Cancel</Link>
           <button className="button button-primary" type="submit">Create advertisement</button>

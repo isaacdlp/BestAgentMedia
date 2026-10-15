@@ -9,6 +9,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { adImageDirectory } from "@/lib/ad-images";
 import { adCreativeDirectory } from "@/lib/ad-creative";
 import { prisma } from "@/lib/db";
+import { scheduleAdArtworkNotification } from "@/lib/promotion-deals";
 
 export async function POST(
   _request: Request,
@@ -69,6 +70,7 @@ export async function POST(
     await rm(resolve(adCreativeDirectory, oldFileName), { force: true });
   }
 
+  scheduleAdArtworkNotification(ad.id);
   revalidatePath(`/ads/${id}`);
   return NextResponse.json({ ok: true }, { status: 200 });
 }

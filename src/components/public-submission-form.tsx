@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
+import { ImageDropzone } from "@/components/image-dropzone";
 
 type PublicationOption = {
   id: number;
@@ -388,60 +389,14 @@ export function PublicSubmissionForm({
                     Add up to five JPEG, PNG, or WebP images. Each image can be
                     up to 10 MB.
                   </p>
-                  <input
-                    accept="image/jpeg,image/png,image/webp"
-                    multiple
-                    onChange={(event) => {
-                      const selectedFiles = Array.from(event.target.files ?? []);
-                      if (selectedFiles.some((file) => file.size > 10 * 1024 * 1024)) {
-                        setError("Each image must be 10 MB or smaller.");
-                        event.target.value = "";
-                        return;
-                      }
-                      if (images.length + selectedFiles.length > 5) {
-                        setError("Choose no more than five images.");
-                        event.target.value = "";
-                        return;
-                      }
-                      if (
-                        selectedFiles.some(
-                          (file) =>
-                            !["image/jpeg", "image/png", "image/webp"].includes(
-                              file.type,
-                            ),
-                        )
-                      ) {
-                        setError("Upload JPEG, PNG, or WebP images only.");
-                        event.target.value = "";
-                        return;
-                      }
-                      setImages((current) => [...current, ...selectedFiles]);
+                  <ImageDropzone
+                    files={images}
+                    maxFiles={5}
+                    onChange={(files) => {
+                      setImages(files);
                       setError(null);
-                      event.target.value = "";
                     }}
-                    type="file"
                   />
-                  {images.length ? (
-                    <ul className="submission-image-file-list">
-                      {images.map((image, index) => (
-                        <li key={`${image.name}-${image.lastModified}-${index}`}>
-                          <span>{image.name} ({formatFileSize(image.size)})</span>
-                          <button
-                            className="text-link"
-                            onClick={() => {
-                              setImages((current) =>
-                                current.filter((_, fileIndex) => fileIndex !== index),
-                              );
-                              setError(null);
-                            }}
-                            type="button"
-                          >
-                            Remove
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
                 </div>
                 <h3>Your contact information</h3>
                 <div className="business-form-grid">
@@ -558,6 +513,3 @@ export function PublicSubmissionForm({
   );
 }
 
-function formatFileSize(bytes: number) {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}

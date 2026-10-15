@@ -1,26 +1,24 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { ImageDropzone } from "@/components/image-dropzone";
 
 export function AdImagesForm({ adId }: { adId: string }) {
   const router = useRouter();
-  const fileRef = useRef<HTMLInputElement>(null);
   const [isPending, startTransition] = useTransition();
+  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const files = fileRef.current?.files;
-    if (!files || files.length === 0) {
+    if (files.length === 0) {
       setError("Select at least one image.");
       return;
     }
     setError(null);
     const formData = new FormData();
-    for (const file of files) {
-      formData.append("images", file);
-    }
+    for (const file of files) formData.append("images", file);
     startTransition(async () => {
       try {
         const res = await fetch(`/api/ads/${adId}/images`, { method: "POST", body: formData });
@@ -29,7 +27,7 @@ export function AdImagesForm({ adId }: { adId: string }) {
           setError((data as { error?: string }).error ?? "Upload failed.");
           return;
         }
-        if (fileRef.current) fileRef.current.value = "";
+        setFiles([]);
         router.refresh();
       } catch {
         setError("Upload failed. Please try again.");
@@ -38,24 +36,16 @@ export function AdImagesForm({ adId }: { adId: string }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ padding: "0 1.5rem 1.5rem" }}>
-      <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-start", flexWrap: "wrap" }}>
-        <input
-          ref={fileRef}
-          accept="image/jpeg,image/png,image/webp"
-          multiple
-          name="images"
-          type="file"
-          style={{ flex: 1, minWidth: 0 }}
-        />
-        <button className="button" disabled={isPending} type="submit">
-          {isPending ? "Uploading…" : "Upload images"}
-        </button>
-      </div>
-      {error ? <p style={{ color: "var(--color-error, red)", marginTop: "0.5rem", fontSize: "0.875rem" }}>{error}</p> : null}
-      <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.75rem" }}>
-        JPEG, PNG or WebP · max 10 MB each
-      </p>
+    <form className="dropzone dropzone-form" onSubmit={handleSubmit}>
+      <ImageDropzone disabled={isPending} files={files} onChange={setFiles} />
+      {error ? <p className="dropzone-error" role="alert">{error}</p> : null}
+      {files.length ? (
+        <div className="dropzone-actions">
+          <button className="button button-primary" disabled={isPending} type="submit">
+            {isPending ? "Uploading…" : `Upload ${files.length} image${files.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      ) : null}
     </form>
   );
 }

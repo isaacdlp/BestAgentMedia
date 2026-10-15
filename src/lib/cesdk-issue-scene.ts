@@ -142,6 +142,18 @@ function createImageBlock(engine: CreativeEngine, page: DesignBlockId, options: 
   return block;
 }
 
+function loadImageSize(src: string) {
+  return new Promise<{ width: number; height: number } | null>((resolve) => {
+    const image = new Image();
+    image.onload = () =>
+      resolve(image.naturalWidth > 0 && image.naturalHeight > 0
+        ? { width: image.naturalWidth, height: image.naturalHeight }
+        : null);
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+}
+
 function createLayoutElement(engine: CreativeEngine, page: DesignBlockId, element: LayoutElement, typeface: Typeface | null) {
   const x = numberOr(element.x, 40);
   const y = numberOr(element.y, 40);
@@ -214,11 +226,23 @@ export async function buildSceneFromLayout(
 }
 
 // Adds an article/advertisement library item to the current page as a linked block.
-export function addContentBlock(engine: CreativeEngine, item: ContentItem, typeface: Typeface | null) {
+export async function addContentBlock(engine: CreativeEngine, item: ContentItem, typeface: Typeface | null) {
   const page = engine.scene.getCurrentPage() ?? engine.scene.getPages()[0];
   if (page === undefined || page === null) return undefined;
+  let imageBox = { width: 500, height: 400 };
+  if (item.imageUrl) {
+    // Size the block to the image's aspect ratio so Cover fill does not crop it.
+    const natural = await loadImageSize(absoluteUrl(item.imageUrl));
+    if (natural) {
+      const margin = 60;
+      const maxWidth = Math.max(1, engine.block.getWidth(page) - margin * 2);
+      const maxHeight = Math.max(1, engine.block.getHeight(page) - margin * 2);
+      const scale = Math.min(maxWidth / natural.width, maxHeight / natural.height);
+      imageBox = { width: natural.width * scale, height: natural.height * scale };
+    }
+  }
   const block = item.imageUrl
-    ? createImageBlock(engine, page, { src: item.imageUrl, x: 60, y: 60, width: 500, height: 400 })
+    ? createImageBlock(engine, page, { src: item.imageUrl, x: 60, y: 60, ...imageBox })
     : createTextBlock(engine, page, { text: item.title, x: 60, y: 60, width: 500, fontSize: 28, bold: true }, typeface);
   applyContentLink(engine, block, newId(), { sourceType: item.type, sourceId: item.id, title: item.title });
   return block;
@@ -240,6 +264,19 @@ export function enforceIssuePageRules(engine: CreativeEngine) {
       changed = true;
     } else {
       seen.add(id);
+    }
+  }
+
+  // The global "lifecycle/destroy" scope defers to each block, so content blocks must opt in or
+  // they cannot be deleted. Pages keep the scope set by setPageMetadata; only change blocks that
+  // are not yet enabled so this does not retrigger history updates.
+  const pageSet = new Set<DesignBlockId>(engine.scene.getPages());
+  for (const block of engine.block.findAll()) {
+    if (pageSet.has(block)) continue;
+    const type = engine.block.getType(block);
+    if (type === "//ly.img.ubq/scene" || type === "//ly.img.ubq/stack" || type === "//ly.img.ubq/page") continue;
+    if (!engine.block.isScopeEnabled(block, "lifecycle/destroy")) {
+      engine.block.setScopeEnabled(block, "lifecycle/destroy", true);
     }
   }
 

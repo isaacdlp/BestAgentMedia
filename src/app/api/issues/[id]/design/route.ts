@@ -137,7 +137,7 @@ export async function PATCH(
             id: { in: articleIds },
             AND: [
               articleScope,
-              { publications: { some: { publicationId: issue.publicationId } } },
+              { issues: { some: { issueId: issue.id } } },
             ],
           },
           select: { id: true },
@@ -147,7 +147,7 @@ export async function PATCH(
       ? prisma.advertisement.findMany({
           where: {
             id: { in: advertisementIds },
-            publications: { some: { publicationId: issue.publicationId } },
+            issues: { some: { issueId: issue.id } },
             status: { not: AdvertisementStatus.DECLINED },
           },
           select: { id: true },

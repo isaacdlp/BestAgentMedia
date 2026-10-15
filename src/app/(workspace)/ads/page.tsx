@@ -34,6 +34,8 @@ export default async function AdsPage({
           OR: [
             { title: { contains: q, mode: "insensitive" as const } },
             { business: { name: { contains: q, mode: "insensitive" as const } } },
+            { issues: { some: { issue: { name: { contains: q, mode: "insensitive" as const } } } } },
+            { issues: { some: { issue: { publication: { name: { contains: q, mode: "insensitive" as const } } } } } },
           ],
         }
       : {}),
@@ -56,7 +58,7 @@ export default async function AdsPage({
         status: true,
         updatedAt: true,
         business: { select: { id: true, name: true } },
-        publications: { select: { publication: { select: { name: true } } } },
+        issues: { select: { issue: { select: { name: true, publication: { select: { name: true } } } } } },
       },
     }),
     prisma.advertisement.count({ where }),
@@ -97,7 +99,7 @@ export default async function AdsPage({
                 <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} />
                   <th>Ad</th>
                   <th>Business</th>
-                  <th>Publications</th>
+                  <th>Issues</th>
                   <th>Status</th>
                   <th>Updated</th>
                   {canManage ? <th>Review</th> : null}
@@ -113,7 +115,7 @@ export default async function AdsPage({
                     <td>
                       <Link className="text-link" href={`/businesses/${ad.business.id}`}>{ad.business.name}</Link>
                     </td>
-                    <td>{ad.publications.map((p) => p.publication.name).join(", ") || "—"}</td>
+                    <td>{ad.issues.map(({ issue }) => `${issue.publication.name} · ${issue.name}`).join(", ") || "—"}</td>
                     <td><span className="status-pill">{formatStatus(ad.status)}</span></td>
                     <td>{ad.updatedAt.toLocaleDateString()}</td>
                     {canManage ? (
@@ -122,7 +124,6 @@ export default async function AdsPage({
                           <input name="id" type="hidden" value={ad.id} />
                           <select aria-label={`Update ${ad.title} status`} defaultValue={ad.status} name="status">
                             <option value="DRAFT">Draft</option>
-                            <option value="SUBMITTED">Submitted</option>
                             <option value="IN_REVIEW">In review</option>
                             <option value="APPROVED">Approved</option>
                             <option value="PUBLISHED">Published</option>

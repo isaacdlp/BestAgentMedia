@@ -3,65 +3,78 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { updateAdvertisement } from "@/app/actions/ads";
+import { AdStyleField, useAdPricing, type AdStyleOption } from "@/components/ad-style-field";
 
-interface Publication {
-  id: number;
+interface Issue {
+  id: string;
   name: string;
+  publicationId: number;
 }
 
 export function AdDetailForm({
   adId,
   title,
   description,
-  cta,
   businessId,
   businessName,
-  allPublications,
-  initialPublications,
+  allIssues,
+  initialIssues,
+  styles,
+  initialStyleId,
+  initialCostCents,
 }: {
   adId: string;
   title: string;
   description: string | null;
-  cta: string | null;
   businessId: number;
   businessName: string;
-  allPublications: Publication[];
-  initialPublications: Publication[];
+  allIssues: Issue[];
+  initialIssues: Issue[];
+  styles: AdStyleOption[];
+  initialStyleId: number | null;
+  initialCostCents: number | null;
 }) {
-  const [pubQuery, setPubQuery] = useState("");
-  const [pubOpen, setPubOpen] = useState(false);
-  const [selectedPubs, setSelectedPubs] = useState<Publication[]>(initialPublications);
-  const pubRef = useRef<HTMLDivElement>(null);
-  const pubInputRef = useRef<HTMLInputElement>(null);
+  const [issueQuery, setIssueQuery] = useState("");
+  const [issueOpen, setIssueOpen] = useState(false);
+  const [selectedIssues, setSelectedIssues] = useState<Issue[]>(initialIssues);
+  const issueRef = useRef<HTMLDivElement>(null);
+  const issueInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (pubRef.current && !pubRef.current.contains(e.target as Node)) {
-        setPubOpen(false);
-        setPubQuery("");
+      if (issueRef.current && !issueRef.current.contains(e.target as Node)) {
+        setIssueOpen(false);
+        setIssueQuery("");
       }
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const selectedPubIds = new Set(selectedPubs.map((p) => p.id));
-  const filteredPubs = pubQuery
-    ? allPublications.filter(
+  const pricing = useAdPricing({
+    options: styles,
+    issues: selectedIssues,
+    initialStyleId: initialStyleId === null ? "" : String(initialStyleId),
+    initialCostCents,
+  });
+
+  const selectedIssueIds = new Set(selectedIssues.map((p) => p.id));
+  const filteredIssues = issueQuery
+    ? allIssues.filter(
         (p) =>
-          !selectedPubIds.has(p.id) &&
-          p.name.toLowerCase().includes(pubQuery.toLowerCase())
+          !selectedIssueIds.has(p.id) &&
+          p.name.toLowerCase().includes(issueQuery.toLowerCase())
       )
     : [];
 
-  function addPub(p: Publication) {
-    setSelectedPubs((prev) => [...prev, p]);
-    setPubQuery("");
-    pubInputRef.current?.focus();
+  function addIssue(p: Issue) {
+    setSelectedIssues((prev) => [...prev, p]);
+    setIssueQuery("");
+    issueInputRef.current?.focus();
   }
 
-  function removePub(id: number) {
-    setSelectedPubs((prev) => prev.filter((p) => p.id !== id));
+  function removeIssue(id: string) {
+    setSelectedIssues((prev) => prev.filter((p) => p.id !== id));
   }
 
   return (
@@ -78,11 +91,6 @@ export function AdDetailForm({
           <textarea defaultValue={description ?? ""} name="description" rows={3} />
         </label>
 
-        <label className="business-field business-field-wide">
-          <span>Call to action URL</span>
-          <input defaultValue={cta ?? ""} name="cta" type="url" />
-        </label>
-
         <div className="business-field">
           <span>Business</span>
           <p style={{ padding: "0.5rem 0" }}>
@@ -92,21 +100,21 @@ export function AdDetailForm({
           </p>
         </div>
 
-        <div className="business-field business-field-wide" ref={pubRef}>
-          <span>Publications</span>
-          {selectedPubs.map((p) => (
-            <input key={p.id} type="hidden" name="publicationIds" value={p.id} />
+        <div className="business-field business-field-wide" ref={issueRef}>
+          <span>Issues</span>
+          {selectedIssues.map((p) => (
+            <input key={p.id} type="hidden" name="issueIds" value={p.id} />
           ))}
           <div className="search-select">
-            {selectedPubs.length > 0 && (
+            {selectedIssues.length > 0 && (
               <div className="search-select-tags">
-                {selectedPubs.map((p) => (
+                {selectedIssues.map((p) => (
                   <span key={p.id} className="search-select-tag">
                     {p.name}
                     <button
                       type="button"
                       className="search-select-tag-remove"
-                      onClick={() => removePub(p.id)}
+                      onClick={() => removeIssue(p.id)}
                       aria-label={`Remove ${p.name}`}
                     >
                       ✕
@@ -117,34 +125,34 @@ export function AdDetailForm({
             )}
             <div className="search-select-input-wrap">
               <input
-                ref={pubInputRef}
+                ref={issueInputRef}
                 type="text"
-                placeholder="Search publications…"
+                placeholder="Search issues…"
                 autoComplete="off"
-                value={pubQuery}
+                value={issueQuery}
                 onChange={(e) => {
-                  setPubQuery(e.target.value);
-                  setPubOpen(true);
+                  setIssueQuery(e.target.value);
+                  setIssueOpen(true);
                 }}
-                onFocus={() => { if (pubQuery) setPubOpen(true); }}
+                onFocus={() => { if (issueQuery) setIssueOpen(true); }}
                 aria-haspopup="listbox"
-                aria-expanded={pubOpen}
+                aria-expanded={issueOpen}
               />
-              {pubQuery && (
+              {issueQuery && (
                 <button
                   type="button"
                   className="search-select-clear"
-                  onClick={() => { setPubQuery(""); setPubOpen(false); pubInputRef.current?.focus(); }}
+                  onClick={() => { setIssueQuery(""); setIssueOpen(false); issueInputRef.current?.focus(); }}
                   aria-label="Clear search"
                 >
                   ✕
                 </button>
               )}
             </div>
-            {pubOpen && pubQuery && (
+            {issueOpen && issueQuery && (
               <ul className="search-select-dropdown" role="listbox">
-                {filteredPubs.length ? (
-                  filteredPubs.map((p) => (
+                {filteredIssues.length ? (
+                  filteredIssues.map((p) => (
                     <li
                       key={p.id}
                       role="option"
@@ -152,19 +160,20 @@ export function AdDetailForm({
                       className="search-select-option"
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        addPub(p);
+                        addIssue(p);
                       }}
                     >
                       <strong>{p.name}</strong>
                     </li>
                   ))
                 ) : (
-                  <li className="search-select-none">No publications match &ldquo;{pubQuery}&rdquo;</li>
+                  <li className="search-select-none">No issues match &ldquo;{issueQuery}&rdquo;</li>
                 )}
               </ul>
             )}
           </div>
         </div>
+        <AdStyleField issues={selectedIssues} options={styles} pricing={pricing} />
       </div>
       <div className="business-form-footer">
         <p className="muted">

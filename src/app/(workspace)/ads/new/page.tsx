@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { requireUser } from "@/lib/auth";
+import { listIssueOptions } from "@/lib/access";
+import { listAdStyleOptions } from "@/lib/ad-styles";
 import { prisma } from "@/lib/db";
 import { NewAdForm } from "./new-ad-form";
 
@@ -11,21 +13,14 @@ export default async function NewAdPage() {
     redirect("/dashboard");
   }
 
-  const [businesses, publications] = await Promise.all([
+  const [businesses, issues] = await Promise.all([
     prisma.business.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true, primaryCategory: true },
     }),
-    user.role === UserRole.ADMIN
-      ? prisma.publication.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } })
-      : prisma.publication.findMany({
-          where: {
-            publisherAccess: { some: { userId: user.id } },
-          },
-          orderBy: { name: "asc" },
-          select: { id: true, name: true },
-        }),
+    listIssueOptions(user),
   ]);
+  const styles = await listAdStyleOptions(issues.map((issue) => issue.publicationId));
 
   return (
     <>
@@ -34,11 +29,11 @@ export default async function NewAdPage() {
           <Link className="text-link back-link" href="/ads">← All advertisements</Link>
           <p className="eyebrow">ADVERTISING</p>
           <h1>Create advertisement</h1>
-          <p className="muted">Add a new ad tied to a business and one or more publications.</p>
+          <p className="muted">Add a new ad tied to a business and one or more issues.</p>
         </div>
       </div>
       <section className="panel">
-        <NewAdForm businesses={businesses} publications={publications} />
+        <NewAdForm businesses={businesses} issues={issues} styles={styles} />
       </section>
     </>
   );

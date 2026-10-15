@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { updateBusiness } from "@/app/actions/businesses";
 import { deleteBusinessImage } from "@/app/actions/ads";
+import { BusinessCategoryPicker } from "@/components/business-category-picker";
 import { BusinessLocationMap } from "@/components/business-location-map";
 import { OnboardButton } from "@/components/onboard-button";
 import { PitchButton } from "@/components/pitch-button";
@@ -34,7 +35,7 @@ export default async function BusinessDetailPage({
   const isAdmin = user.role === UserRole.ADMIN;
   const { claimed } = await searchParams;
 
-  const [business, marketerAgent, businessImages] = await Promise.all([
+  const [business, marketerAgent, businessImages, hereCategoryRows] = await Promise.all([
     prisma.business.findFirst({
       where: { id: businessId, ...scope },
       include: { owner: { select: { id: true, name: true, surname: true } } },
@@ -48,7 +49,11 @@ export default async function BusinessDetailPage({
       orderBy: { position: "asc" },
       select: { id: true, originalName: true, mimeType: true, size: true },
     }),
+    isAdmin
+      ? prisma.hereCategory.findMany({ select: { name: true }, orderBy: { name: "asc" } })
+      : Promise.resolve([]),
   ]);
+  const categoryOptions = [...new Set(hereCategoryRows.map(({ name }) => name))];
 
   if (!business) notFound();
 
@@ -69,15 +74,24 @@ export default async function BusinessDetailPage({
         </div>
         <div className="page-heading-actions">
           {isAdmin ? <span className="role-pill">{business.sourceProvider.toLowerCase()}</span> : null}
-          {isAdmin ? (
+          {isAdmin && marketerAgent?.enabled && business.email ? (
+            <PitchButton businessId={business.id} />
+          ) : null}
+          {isAdmin && business.email ? (
             <OnboardButton
               businessId={business.id}
               claimed={business.ownerUserId !== null}
-              hasEmail={Boolean(business.email)}
+              hasEmail
             />
           ) : null}
           {isAdmin && marketerAgent?.enabled && business.email ? (
-            <PitchButton businessId={business.id} />
+            <Link
+              className="button button-primary"
+              href={`/businesses/promote/new?business=${business.id}`}
+              title="Sell this business paid promotions in an upcoming issue."
+            >
+              Promote
+            </Link>
           ) : null}
         </div>
       </div>
@@ -108,10 +122,7 @@ export default async function BusinessDetailPage({
                     <span>Description</span>
                     <textarea defaultValue={business.description ?? ""} name="description" rows={3} />
                   </label>
-                  <label className="business-field business-field-wide">
-                    <span>Categories (one per line)</span>
-                    <textarea defaultValue={business.categories.join("\n")} name="categories" rows={3} />
-                  </label>
+                  <BusinessCategoryPicker initialSelected={business.categories} options={categoryOptions} />
                   <BusinessField label="Source provider" name="sourceProvider" required value={business.sourceProvider} />
                   <BusinessField label="External ID" name="externalId" value={business.externalId} />
                   <BusinessField label="Source query" name="sourceQuery" value={business.sourceQuery} />

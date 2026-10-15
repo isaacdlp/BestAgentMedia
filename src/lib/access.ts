@@ -40,10 +40,18 @@ export async function getAdvertisementScope(
         where: { userId: user.id },
         select: { publicationId: true },
       });
+      // Unassigned ads stay visible so an editor can attach them to an Issue.
       return {
-        publications: {
-          some: { publicationId: { in: assignments.map(({ publicationId }) => publicationId) } },
-        },
+        OR: [
+          {
+            issues: {
+              some: {
+                issue: { publicationId: { in: assignments.map(({ publicationId }) => publicationId) } },
+              },
+            },
+          },
+          { issues: { none: {} } },
+        ],
       };
     }
     default:
@@ -100,12 +108,14 @@ export async function getArticleScope(
         where: { userId: user.id },
         select: { publicationId: true },
       });
+      const publicationIds = assignments.map(({ publicationId }) => publicationId);
+      // Articles accepted from a submission stay visible until they are attached to an Issue.
       return {
-        publications: {
-          some: {
-            publicationId: { in: assignments.map(({ publicationId }) => publicationId) },
-          },
-        },
+        OR: [
+          { issues: { some: { issue: { publicationId: { in: publicationIds } } } } },
+          { sourceSubmission: { is: { publicationId: { in: publicationIds } } } },
+          { issues: { none: {} }, sourceSubmissionId: null },
+        ],
       };
     }
     default:
@@ -116,4 +126,32 @@ export async function getArticleScope(
         ],
       };
   }
+}
+
+export type IssueOption = { id: string; name: string; issueName: string; publicationId: number };
+
+/** Issues the user may attach ads/articles to, labelled "Publication · Issue". */
+export async function listIssueOptions(user: AwaitedUser): Promise<IssueOption[]> {
+  const scope = await getIssueScope(user);
+  if (!scope) return [];
+  const issues = await prisma.issue.findMany({
+    where: scope,
+    orderBy: [{ publicationDate: "desc" }, { name: "asc" }],
+    select: { id: true, name: true, publicationId: true, publication: { select: { name: true } } },
+  });
+  return issues.map((issue) => ({
+    id: issue.id,
+    name: `${issue.publication.name} · ${issue.name}`,
+    issueName: issue.name,
+    publicationId: issue.publicationId,
+  }));
+}
+
+/** Returns the distinct issue ids if every one is in the user's scope, otherwise null. */
+export async function resolveIssueIds(user: AwaitedUser, issueIds: string[]): Promise<string[] | null> {
+  const scope = await getIssueScope(user);
+  if (!scope) return null;
+  const unique = [...new Set(issueIds)];
+  const found = await prisma.issue.findMany({ where: { id: { in: unique }, ...scope }, select: { id: true } });
+  return found.length === unique.length ? unique : null;
 }

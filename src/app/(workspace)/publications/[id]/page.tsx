@@ -7,8 +7,10 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { PublicationCoverageMap } from "@/components/publication-coverage-map";
 import { PublicationCoverImage } from "@/components/publication-cover-image";
+import { formatCents } from "@/lib/promotion-packages";
 import { buildPublicationMapData } from "@/lib/zip-code-map";
 import { PublicationEditor } from "./publication-editor";
+import { PublicationRatesEditor } from "./publication-rates-editor";
 
 type PublicationDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -36,10 +38,14 @@ export default async function PublicationDetailPage({
     where: { id: Number(id), ...scope },
     include: {
       zipCodes: { orderBy: { code: "asc" } },
-      _count: { select: { submissions: true, advertisements: true } },
+      _count: { select: { submissions: true } },
       publisherAccess: {
         orderBy: { user: { name: "asc" } },
         select: { user: { select: { id: true, name: true, surname: true, email: true, role: true } } },
+      },
+      promotionPackages: {
+        orderBy: [{ kind: "asc" }, { position: "asc" }],
+        select: { id: true, kind: true, name: true, description: true, priceCents: true },
       },
     },
   });
@@ -47,6 +53,10 @@ export default async function PublicationDetailPage({
   if (!publication) {
     notFound();
   }
+
+  const advertisementCount = await prisma.advertisement.count({
+    where: { issues: { some: { issue: { publicationId: publication.id } } } },
+  });
 
   const coverImageRecords = await prisma.$queryRaw<
     Array<{ coverImagePath: string | null }>
@@ -141,7 +151,7 @@ export default async function PublicationDetailPage({
           {canEdit ? (
             <>
               <PublicationEditor
-                advertisementCount={publication._count.advertisements}
+                advertisementCount={advertisementCount}
                 coverImageUrl={coverImageUrl}
                 id={publication.id}
                 name={publication.name}
@@ -180,7 +190,7 @@ export default async function PublicationDetailPage({
               />
               <PublicationValue
                 label="Activity"
-                value={`${publication._count.submissions} submissions · ${publication._count.advertisements} advertisements`}
+                value={`${publication._count.submissions} submissions · ${advertisementCount} advertisements`}
               />
             </dl>
           )}
@@ -215,6 +225,40 @@ export default async function PublicationDetailPage({
             </div>
           ) : (
             <div className="empty-state">No publishers are assigned to this publication.</div>
+          )}
+
+          <br/>
+          <div className="panel-heading">
+            <h2>Promotion rates</h2>
+            <span className="count-badge">{publication.promotionPackages.length}</span>
+          </div>
+          {canEdit ? (
+            <PublicationRatesEditor publicationId={publication.id} rates={publication.promotionPackages} />
+          ) : publication.promotionPackages.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Package</th>
+                    <th>Description</th>
+                    <th>Price per issue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {publication.promotionPackages.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.kind === "AD" ? "Ad" : "Article"}</td>
+                      <td className="table-primary">{item.name}</td>
+                      <td>{item.description || "—"}</td>
+                      <td>{formatCents(item.priceCents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty-state">No promotion rates are set for this publication.</div>
           )}
         </section>
 

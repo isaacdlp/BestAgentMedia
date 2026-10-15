@@ -60,7 +60,7 @@ export default async function DashboardPage() {
               title: true,
               status: true,
               updatedAt: true,
-              publications: { select: { publication: { select: { name: true } } }, take: 1 },
+              issues: { select: { issue: { select: { name: true, publication: { select: { name: true } } } } }, take: 1 },
             },
           })
         : Promise.resolve([]),
@@ -153,7 +153,7 @@ export default async function DashboardPage() {
                     <div className="activity-symbol symbol-orange">A</div>
                     <div className="activity-main">
                       <strong>{ad.title}</strong>
-                      <span>{ad.publications[0]?.publication.name ?? "—"}</span>
+                      <span>{ad.issues[0] ? `${ad.issues[0].issue.publication.name} · ${ad.issues[0].issue.name}` : "—"}</span>
                     </div>
                     <span className="status-pill">{formatStatus(ad.status)}</span>
                   </div>

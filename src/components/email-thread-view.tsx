@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ClientListToolbar } from "@/components/list-toolbar";
 import { ClientListPagination } from "@/components/list-pagination";
+import { BulkActionBar, BulkCheckbox, bulkDelete, bulkDeleteMessage, useBulkSelection } from "@/components/bulk-select";
 
 type EmailMessage = {
   id: string;
@@ -97,10 +98,9 @@ function ThreadDetail({
     }
   }, [subAgentId, threadId]);
 
-  // Load on mount
-  if (loading && !thread) {
+  useEffect(() => {
     void load();
-  }
+  }, [load]);
 
   return (
     <div className="email-thread-detail">
@@ -151,6 +151,8 @@ export function EmailThreadList({ subAgentId }: { subAgentId: number }) {
   const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const selection = useBulkSelection(threads.map((t) => t.id));
 
   const refresh = useCallback(async () => {
     const params = new URLSearchParams();
@@ -175,6 +177,21 @@ export function EmailThreadList({ subAgentId }: { subAgentId: number }) {
     const id = setTimeout(() => { void refresh(); }, q ? 300 : 0);
     return () => clearTimeout(id);
   }, [subAgentId, q, sort, order, page, limit]);
+
+  async function handleBulkDelete() {
+    const ids = selection.selectedIds;
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} thread${ids.length === 1 ? "" : "s"}? Their messages will also be deleted from the email inbox.`)) return;
+    setBulkBusy(true);
+    setError(null);
+    const { deleted, failed } = await bulkDelete(ids, (id) => `/api/sub-agents/${subAgentId}/threads/${id}`);
+    selection.clear();
+    if (deleted.length && deleted.length >= threads.length && page > 1) setPage(page - 1);
+    await refresh();
+    const message = bulkDeleteMessage(failed, deleted.length);
+    if (message) setError(message);
+    setBulkBusy(false);
+  }
 
   if (selectedId) {
     return (
@@ -203,15 +220,32 @@ export function EmailThreadList({ subAgentId }: { subAgentId: number }) {
       />
       {error ? <p className="form-error">{error}</p> : null}
       {threads.length ? (
+        <BulkActionBar
+          allSelected={selection.allSelected}
+          busy={bulkBusy}
+          count={selection.selectedIds.length}
+          onDelete={() => void handleBulkDelete()}
+          onToggleAll={selection.toggleAll}
+          someSelected={selection.someSelected}
+        />
+      ) : null}
+      {threads.length ? (
         <div className="email-thread-list">
           {threads.map((t) => {
             const lastMsg = t.messages[0];
             const isUnread = lastMsg?.direction === "INBOUND";
             return (
+              <div className="email-thread-row-wrap" key={t.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <BulkCheckbox
+                checked={selection.isSelected(t.id)}
+                disabled={bulkBusy}
+                label={`Select thread ${t.subject}`}
+                onChange={() => selection.toggle(t.id)}
+              />
               <button
                 className={`email-thread-row ${isUnread ? "email-thread-row-unread" : ""}`}
-                key={t.id}
                 onClick={() => setSelectedId(t.id)}
+                style={{ flex: 1 }}
                 type="button"
               >
                 <div className="email-thread-row-info">
@@ -226,6 +260,7 @@ export function EmailThreadList({ subAgentId }: { subAgentId: number }) {
                   {isUnread ? <span className="email-unread-dot" aria-label="New reply" /> : null}
                 </div>
               </button>
+              </div>
             );
           })}
         </div>

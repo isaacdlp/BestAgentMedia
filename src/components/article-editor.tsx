@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState, type FormEvent } from "react";
+import { ImageDropzone } from "@/components/image-dropzone";
 
 type ArticleEditorImage = {
   id: string;
@@ -17,25 +18,26 @@ type ArticleEditorProps = {
     title: string;
     body: string;
     status: string;
-    publicationIds: number[];
+    issueIds: string[];
     images: ArticleEditorImage[];
     businessId: number | null;
   } | null;
   canViewImageDetail?: boolean;
-  publications: { id: number; name: string }[];
+  issues: { id: string; name: string }[];
   businesses: { id: number; name: string }[];
   canEdit: boolean;
 };
 
 export function ArticleEditor({
   article,
-  publications,
+  issues,
   businesses,
   canEdit,
   canViewImageDetail = false,
 }: ArticleEditorProps) {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [newFiles, setNewFiles] = useState<File[]>([]);
 
   async function saveArticle(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -76,22 +78,22 @@ export function ArticleEditor({
         {canEdit ? (
           <>
             <fieldset className="article-publications business-field business-field-wide">
-              <legend>Publications</legend>
+              <legend>Issues</legend>
               <div className="article-publication-options">
-                {publications.map((publication) => (
-                  <label key={publication.id}>
+                {issues.map((issue) => (
+                  <label key={issue.id}>
                     <input
-                      defaultChecked={article?.publicationIds.includes(publication.id) ?? false}
-                      name="publicationIds"
+                      defaultChecked={article?.issueIds.includes(issue.id) ?? false}
+                      name="issueIds"
                       required={false}
                       type="checkbox"
-                      value={publication.id}
+                      value={issue.id}
                     />
-                    {publication.name}
+                    {issue.name}
                   </label>
                 ))}
               </div>
-              {!publications.length ? <span className="muted">No publications are assigned to your workspace.</span> : null}
+              {!issues.length ? <span className="muted">No issues are available in your workspace.</span> : null}
             </fieldset>
             <label className="business-field">
               <span>Status</span>
@@ -173,11 +175,10 @@ export function ArticleEditor({
         <section className="article-image-section">
           <h2>Add images</h2>
           <div className="business-form-grid">
-            <label className="business-field business-field-wide">
-              <span>Choose image files</span>
-              <input accept="image/png,image/jpeg,image/webp" multiple name="images" type="file" />
-              <small>JPEG, PNG, or WebP · up to 10 MB per image · up to 50 MB per save</small>
-            </label>
+            <div className="business-field business-field-wide">
+              <span>Add image files</span>
+              <ImageDropzone files={newFiles} hint="JPEG, PNG, or WebP · up to 10 MB per image · up to 50 MB per save" name="images" onChange={setNewFiles} />
+            </div>
             <label className="business-field business-field-wide">
               <span>New image captions (one line per selected file, in file order)</span>
               <textarea name="newImageCaptions" placeholder="Leave blank to use no caption" rows={3} />
@@ -190,7 +191,7 @@ export function ArticleEditor({
       {canEdit ? (
         <div className="publication-form-footer">
           <span className="muted">{article ? "Changes are saved directly to the article." : "The article will start in the selected status."}</span>
-          <button className="button button-primary business-save" disabled={pending || !publications.length} type="submit">
+          <button className="button button-primary business-save" disabled={pending || !issues.length} type="submit">
             {pending ? "Saving…" : "Save article"}
           </button>
         </div>

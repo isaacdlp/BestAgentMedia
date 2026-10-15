@@ -43,11 +43,16 @@ export default async function PublicationsPage({
         id: true,
         name: true,
         zipCodes: { select: { estimatedPopulation: true, areaSquareMiles: true } },
-        _count: { select: { submissions: true, advertisements: true } },
+        _count: { select: { submissions: true } },
       },
     }),
     prisma.publication.count({ where }),
   ]);
+  const advertisementCounts = await Promise.all(
+    publications.map(({ id }) =>
+      prisma.advertisement.count({ where: { issues: { some: { issue: { publicationId: id } } } } }),
+    ),
+  );
 
   return (
     <>
@@ -78,7 +83,7 @@ export default async function PublicationsPage({
                 <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Publication</th><th>Zip Count</th><th>Distribution</th><th>Area</th><th>Submissions</th><th>Ads</th></tr>
               </thead>
               <tbody>
-                {publications.map((publication) => (
+                {publications.map((publication, index) => (
                   <tr key={publication.id}>
                     <RecordSelectCell id={publication.id} label={publication.name} />
                     <td className="table-primary">
@@ -88,7 +93,7 @@ export default async function PublicationsPage({
                     <td>{formatPopulation(publication.zipCodes)}</td>
                     <td>{formatArea(publication.zipCodes)}</td>
                     <td>{publication._count.submissions}</td>
-                    <td>{publication._count.advertisements}</td>
+                    <td>{advertisementCounts[index]}</td>
 </tr>
                 ))}
               </tbody>

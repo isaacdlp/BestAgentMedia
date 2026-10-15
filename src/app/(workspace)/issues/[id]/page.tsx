@@ -41,7 +41,8 @@ export default async function IssueDetailPage({
       where: {
         AND: [
           articleScope,
-          { publications: { some: { publicationId: issue.publicationId } } },
+          { issues: { some: { issueId: issue.id } } },
+          { status: { in: ["ACCEPTED", "PUBLISHED"] } },
         ],
       },
       orderBy: { title: "asc" },
@@ -57,11 +58,16 @@ export default async function IssueDetailPage({
     }),
     prisma.advertisement.findMany({
       where: {
-        publications: { some: { publicationId: issue.publicationId } },
-        status: { not: "DECLINED" },
+        issues: { some: { issueId: issue.id } },
+        status: { in: ["APPROVED", "PUBLISHED"] },
       },
       orderBy: { title: "asc" },
-      select: { id: true, title: true, business: { select: { name: true } } },
+      select: {
+        id: true,
+        title: true,
+        creativeFileName: true,
+        business: { select: { name: true } },
+      },
     }),
   ]);
   const canManage = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
@@ -122,6 +128,7 @@ export default async function IssueDetailPage({
             title: ad.title,
             type: "advertisement" as const,
             description: ad.business.name,
+            imageUrl: ad.creativeFileName ? `/api/ads/${ad.id}/creative` : undefined,
           }))}
           articles={articles.map((article) => ({
             id: article.id,

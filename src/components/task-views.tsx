@@ -73,6 +73,17 @@ const CREATIVE_STATUS_TEXT: Record<CreativeReviewStatus, string> = {
   iterating: "Iterated — a follow-up task was started from this result.",
 };
 
+/** A follow-up Creative task launched from a result (Iterate, Generate again). */
+export type CreativeFollowUp = {
+  label: string;
+  endpoint: string;
+  body: Record<string, unknown>;
+  /** Prefilled instructions for the next pass. */
+  customInstructions: string;
+  placeholder: string;
+  hint: string;
+};
+
 export function CreativeTaskView({
   agentTaskId,
   trigger,
@@ -81,7 +92,7 @@ export function CreativeTaskView({
   recordHref,
   recordLabel,
   isPublicationCover,
-  iterate,
+  followUps,
   canAct,
 }: {
   agentTaskId: string;
@@ -91,15 +102,16 @@ export function CreativeTaskView({
   recordHref: string | null;
   recordLabel: string;
   isPublicationCover: boolean;
-  /** Request body for launching a follow-up pass; null when iteration is not possible. */
-  iterate: { endpoint: string; body: Record<string, unknown>; customInstructions: string } | null;
+  /** Follow-up passes that can be launched from this result; the first is the primary action. */
+  followUps: CreativeFollowUp[];
   canAct: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [iterating, setIterating] = useState(false);
-  const [instructions, setInstructions] = useState(iterate?.customInstructions ?? "");
+  const [iterate, setIterate] = useState<CreativeFollowUp | null>(null);
+  const [instructions, setInstructions] = useState("");
+  const iterating = iterate !== null;
   const isAd = trigger === "generate-ad";
   const hasResultImage = reviewStatus === "pending_review" || reviewStatus === "iterating";
   const pending = reviewStatus === "pending_review";
@@ -141,7 +153,7 @@ export function CreativeTaskView({
       if (!response.ok || !data.task) throw new Error(data.error ?? "The follow-up task could not be started.");
       if (pending) await apply("iterate");
       announceTaskStarted(data.task);
-      setIterating(false);
+      setIterate(null);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "The follow-up task could not be started.");
@@ -175,7 +187,7 @@ export function CreativeTaskView({
 
       {error ? <p className="form-error" role="alert">{error}</p> : null}
 
-      {canAct && (pending || iterate) ? (
+      {canAct && (pending || followUps.length) ? (
         <div className="task-actions">
           {pending ? (
             <>
@@ -188,48 +200,55 @@ export function CreativeTaskView({
                 </button>
               ) : null}
               {!isPublicationCover ? (
-                <button className="button button-secondary" disabled={busy} onClick={() => void handleApply("keep")} type="button">
+                <button className={`button ${isAd ? "button-primary" : "button-secondary"}`} disabled={busy} onClick={() => void handleApply("keep")} type="button">
                   {isAd ? "Save as image" : "Keep as new image"}
                 </button>
               ) : null}
             </>
           ) : null}
-          {iterate && !iterating ? (
-            <button className="button button-primary" disabled={busy} onClick={() => setIterating(true)} type="button">
-              {isAd ? "Generate again" : "Iterate"}
-            </button>
-          ) : null}
+          {!iterating
+            ? followUps.map((followUp, index) => (
+                <button
+                  className={`button ${index === 0 && !(isAd && pending) ? "button-primary" : "button-secondary"}`}
+                  disabled={busy}
+                  key={followUp.label}
+                  onClick={() => {
+                    setInstructions(followUp.customInstructions);
+                    setIterate(followUp);
+                  }}
+                  type="button"
+                >
+                  {followUp.label}
+                </button>
+              ))
+            : null}
         </div>
       ) : null}
 
-      {iterating && iterate ? (
+      {iterate ? (
         <div className="task-iterate-form">
           <AgentBadge agentSlug="creative" />
           <label className="enhance-label">
             <span>
-              Instructions for the next pass <span className="muted">(optional)</span>
+              {iterate.label}: instructions for the next pass <span className="muted">(optional)</span>
             </span>
             <textarea
               className="enhance-textarea"
               onChange={(event) => setInstructions(event.target.value)}
-              placeholder={isAd ? `e.g. "bolder headline", "use the logo prominently"…` : `e.g. "brighten the sky", "crop tighter on the subject"…`}
+              placeholder={iterate.placeholder}
               rows={3}
               value={instructions}
             />
           </label>
           <div className="task-actions">
-            <button className="button button-secondary" disabled={busy} onClick={() => setIterating(false)} type="button">
+            <button className="button button-secondary" disabled={busy} onClick={() => setIterate(null)} type="button">
               Cancel
             </button>
             <button className="button button-primary" disabled={busy} onClick={() => void handleIterate()} type="button">
               Start new task
             </button>
           </div>
-          <p className="muted task-hint">
-            {isAd
-              ? "A new generation task runs in the background with the same reference images."
-              : "A new enhancement task runs in the background using this result as its source."}
-          </p>
+          <p className="muted task-hint">{iterate.hint}</p>
         </div>
       ) : null}
     </section>

@@ -1,13 +1,15 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { MessageDirection, ReachoutTaskStatus } from "@prisma/client";
+import { generateAssistantReply } from "@/lib/assistant-reply";
 import { prisma } from "@/lib/db";
+import { handleMarketerInboundMessage } from "@/lib/marketer-agent";
+import { isPromotionThread } from "@/lib/promotion-deals";
 import { sendSubAgentEmail } from "@/lib/sub-agent-email";
 
 /**
  * Generates and sends an LLM reply for any inbound message on a thread that
- * is not already handled by the reachout-specific auto-reply logic (which
- * covers RUNNING reachout tasks with a hardcoded claim-URL template).
+ * is not already handled by the reachout-specific reply logic (which covers
+ * RUNNING reachout tasks and adds the business's claim link as context).
  *
  * Requires CLAUDE_KEY in the environment. Silently no-ops if the key is absent.
  */
@@ -19,14 +21,13 @@ export async function handleGenericInboundMessage(threadId: string): Promise<voi
       select: { status: true },
     });
     if (reachout?.status === ReachoutTaskStatus.RUNNING) return;
-
-    const apiKey = process.env.CLAUDE_KEY;
-    if (!apiKey) return;
+    // Advertiser review threads are answered by the Marketer's promotion handler
+    if (await isPromotionThread(threadId)) return;
 
     const thread = await prisma.emailThread.findUnique({
       where: { id: threadId },
       include: {
-        subAgent: { select: { id: true, name: true, soul: true } },
+        subAgent: { select: { id: true, name: true, soul: true, agent: { select: { slug: true } } } },
         messages: { orderBy: { createdAt: "asc" } },
       },
     });
@@ -46,43 +47,25 @@ export async function handleGenericInboundMessage(threadId: string): Promise<voi
       if (linkedResult?.contentType === "clarification") return;
     }
 
-    // Build the conversation history for Claude
-    const claudeMessages: Anthropic.MessageParam[] = thread.messages.map((msg) => ({
-      role: msg.direction === MessageDirection.OUTBOUND ? "assistant" : "user",
-      content: msg.bodyText,
-    }));
+    // Marketer threads (pitches and other business conversations) get the Marketer's own sales brief
+    if (thread.subAgent.agent.slug === "marketer") {
+      await handleMarketerInboundMessage(threadId);
+      return;
+    }
 
-    const systemPrompt = [
-      thread.subAgent.soul,
-      "",
-      "You are replying to an email conversation on behalf of Best Version Media.",
-      "IMPORTANT: You may only discuss business-related matters — local advertising, publication listings, community stories, and business directory claims.",
-      "If the sender raises any topic that is not directly related to these business purposes, politely acknowledge their message and redirect the conversation back to how you can help them with their local business or publication.",
-      "Never discuss personal matters, politics, or topics unrelated to Best Version Media's services.",
-      "Write a helpful, warm, and concise plain-text reply. Do not include a subject line, email headers, or metadata.",
-      `Sign off with your name: ${thread.subAgent.name}.`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const client = new Anthropic({ apiKey });
-    const response = await client.messages.create({
-      model: "claude-haiku-5-5",
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: claudeMessages,
+    const generated = await generateAssistantReply({
+      agent: thread.subAgent,
+      messages: thread.messages,
+      recipientName: thread.toName,
+      context: [`The email subject is "${thread.subject}".`],
     });
+    if (!generated) return;
+    const replyBody = generated.reply;
 
-    const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-    const replyBody = textBlock?.text.trim();
-    if (!replyBody) return;
-
-    const subject = thread.subject.startsWith("Re:") ? thread.subject : `Re: ${thread.subject}`;
     await sendSubAgentEmail({
       subAgentId: thread.subAgent.id,
       toEmail: thread.toEmail,
       toName: thread.toName ?? undefined,
-      subject,
       bodyText: replyBody,
       existingThreadId: threadId,
     });

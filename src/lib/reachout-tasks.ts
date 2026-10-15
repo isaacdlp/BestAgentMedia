@@ -1,5 +1,6 @@
 import "server-only";
 import { ReachoutTaskStatus } from "@prisma/client";
+import { generateAssistantReply } from "@/lib/assistant-reply";
 import { sendSubAgentEmail, getSubAgentConfig } from "@/lib/sub-agent-email";
 import { prisma } from "@/lib/db";
 
@@ -28,9 +29,7 @@ Claiming your business is free and takes just a minute:
 
 If you have any questions, simply reply to this email — we're happy to help.
 
-Warm regards,
-{agentName}
-Best Version Media`;
+Warm regards,`;
 
 const REMINDER_1_SUBJECT = "Following up: claim your listing in {publicationName}";
 const REMINDER_1_BODY = `Hello,
@@ -44,9 +43,7 @@ Claim your listing here:
 
 Feel free to reply with any questions.
 
-Warm regards,
-{agentName}
-Best Version Media`;
+Warm regards,`;
 
 const REMINDER_2_SUBJECT = "Last reminder: {businessName} listing in {publicationName}";
 const REMINDER_2_BODY = `Hello,
@@ -59,25 +56,7 @@ We'd love to connect {businessName} with the community readers who are already s
 
 No action required if you'd prefer not to participate — your listing will remain as-is. But if you'd like to connect with your local publication team, we're just a reply away.
 
-Warm regards,
-{agentName}
-Best Version Media`;
-
-const AUTO_REPLY_BODY = `Hello,
-
-Thank you for getting back to us! We appreciate your interest in {publicationName}.
-
-Our team will be happy to help. In the meantime, you can get started right away by creating a free account to claim your {businessName} listing:
-
-{registrationUrl}
-
-Once you've created your account, you'll be able to update your business details and explore advertising and community highlight opportunities with your local publication team.
-
-Feel free to reply to this email with any questions — we're here to help.
-
-Warm regards,
-{agentName}
-Best Version Media`;
+Warm regards,`;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -400,8 +379,10 @@ export async function handleReachoutInboundMessage(threadId: string): Promise<vo
     const task = await prisma.reachoutTask.findUnique({
       where: { threadId },
       include: {
-        business: { select: { id: true, name: true, postalCode: true, ownerUserId: true } },
-        subAgent: { select: { name: true } },
+        business: {
+          select: { id: true, name: true, postalCode: true, ownerUserId: true, primaryCategory: true, city: true },
+        },
+        subAgent: { select: { name: true, soul: true } },
       },
     });
     if (!task || task.status !== ReachoutTaskStatus.RUNNING) return;
@@ -423,21 +404,57 @@ export async function handleReachoutInboundMessage(threadId: string): Promise<vo
     const claimToken = await getOrCreateClaimToken(task.business.id);
     const registrationUrl = buildClaimUrl(claimToken);
     const publicationName = await resolvePublicationName(task.business.postalCode);
-    const vars = buildVars(task.business.name, publicationName, registrationUrl, task.subAgent?.name ?? "");
 
-    const thread = await prisma.emailThread.findUnique({ where: { id: threadId }, select: { toEmail: true } });
+    const thread = await prisma.emailThread.findUnique({
+      where: { id: threadId },
+      select: { toEmail: true, subject: true, messages: { orderBy: { createdAt: "asc" } } },
+    });
+    if (!thread) return;
+
+    // Write a real answer to what the owner said. If Claude is unavailable, record why and send nothing:
+    // a canned reply that ignores their question does more harm than no reply.
+    let reply: { reply: string; optedOut: boolean } | null = null;
+    let failureReason = "CLAUDE_KEY not set or empty model response";
+    if (task.subAgent) {
+      try {
+        reply = await generateAssistantReply({
+          agent: task.subAgent,
+          messages: thread.messages,
+          recipientName: task.business.name,
+          context: [
+            `You emailed ${task.business.name}${task.business.primaryCategory ? ` (${task.business.primaryCategory})` : ""}${task.business.city ? ` in ${task.business.city}` : ""} to let them know their business is listed in the directory for ${publicationName} and invite them to claim it.`,
+            `Their personal claim link: ${registrationUrl}`,
+            "They have not claimed the listing yet.",
+          ],
+        });
+      } catch (err) {
+        failureReason = err instanceof Error ? err.message : String(err);
+        console.error(`[ReachoutTask] Claude reply failed for thread ${threadId}; no reply sent:`, err);
+      }
+    }
+
+    if (!reply) {
+      await prisma.reachoutTask.update({
+        where: { id: task.id },
+        data: { message: `Inbound message not answered — AI reply failed: ${failureReason}` },
+      });
+      return;
+    }
+
     await sendSubAgentEmail({
       subAgentId: task.subAgentId,
-      toEmail: thread?.toEmail ?? "",
+      toEmail: thread.toEmail,
       toName: task.business.name,
-      subject: `Re: Your listing in ${publicationName}`,
-      bodyText: interpolate(AUTO_REPLY_BODY, vars),
+      bodyText: reply.reply,
       existingThreadId: threadId,
     });
 
+    // Stop reminders for owners who declined.
     await prisma.reachoutTask.update({
       where: { id: task.id },
-      data: { message: "Replied to inbound message." },
+      data: reply.optedOut
+        ? { status: ReachoutTaskStatus.STOPPED, message: "Owner declined — replied and stopped reminders.", finishedAt: new Date() }
+        : { message: "Replied to inbound message (Claude)." },
     });
   } catch (err) {
     console.error(`[ReachoutTask] handleReachoutInboundMessage failed for thread ${threadId}:`, err);

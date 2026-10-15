@@ -192,7 +192,6 @@ export async function promoteSubmissionToArticle(formData: FormData) {
           status: ArticleStatus.DRAFT,
           sourceSubmissionId: id,
           createdByUserId: user.id,
-          publications: { create: [{ publicationId: submission.publicationId }] },
           images: {
             create: images.map((image) => ({
               fileName: image.articleFileName,

@@ -53,8 +53,14 @@ export async function updateAdvertisementStatus(formData: FormData) {
     redirect("/dashboard");
   }
 
-  const ad = await prisma.advertisement.findFirst({ where: { id, ...scope }, select: { id: true } });
+  const ad = await prisma.advertisement.findFirst({
+    where: { id, ...scope },
+    select: { id: true, _count: { select: { issues: true } } },
+  });
   if (!ad) throw new Error("Advertisement not found or not accessible.");
+  if (status === "PUBLISHED" && ad._count.issues === 0) {
+    throw new Error("Assign the ad to at least one issue before publishing it.");
+  }
 
   await prisma.advertisement.update({ where: { id: ad.id }, data: { status } });
 

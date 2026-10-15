@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
+import { ImageDropzone } from "@/components/image-dropzone";
 import {
   updatePublication,
   type PublicationActionState,
@@ -34,6 +35,14 @@ export function PublicationEditor({
     initialState,
   );
 
+  const [coverFiles, setCoverFiles] = useState<File[]>([]);
+  const wasPending = useRef(false);
+  // The form resets after a save; drop the previewed file so the list matches the input.
+  useEffect(() => {
+    if (wasPending.current && !pending) setCoverFiles([]);
+    wasPending.current = pending;
+  }, [pending]);
+
   return (
     <form action={formAction} className="business-form">
       <input name="id" type="hidden" defaultValue={id} />
@@ -57,18 +66,16 @@ export function PublicationEditor({
           <span>Publication cover</span>
           <div className="cover-image-editor">
             <div className="cover-image-actions">
-              <label className="button button-secondary cover-upload-button">
-                Upload new cover
-                <input
-                  accept="image/png,image/jpeg"
-                  className="cover-image-input"
-                  name="coverImage"
-                  type="file"
-                />
-              </label>
-              <small className="cover-image-hint">
-                PNG or JPEG · at least 300 × 400 px · max 10 MB
-              </small>
+              <ImageDropzone
+                accept={["image/png", "image/jpeg"]}
+                compact
+                files={coverFiles}
+                hint="PNG or JPEG · at least 300 × 400 px · max 10 MB"
+                multiple={false}
+                name="coverImage"
+                onChange={setCoverFiles}
+                title="Drop a new cover here or click to browse"
+              />
               {coverImageUrl ? (
                 <label className="cover-remove-label">
                   <input name="removeCoverImage" type="checkbox" />

@@ -1,13 +1,17 @@
 import { notFound, redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { toggleAgent, updateAgentSettings } from "@/app/actions/agents";
-import type { AgentTaskSummary } from "@/components/agent-task-list";
-import { AgentTaskList } from "@/components/agent-task-list";
+import Link from "next/link";
 import { AgentIdentityPanel } from "@/components/agent-identity-panel";
 import type { SubAgentSummary } from "@/components/sub-agent-list";
 import { SubAgentList } from "@/components/sub-agent-list";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import {
+  DEFAULT_MAX_DISCOUNT_PERCENT,
+  DEFAULT_PROMOTION_FOLLOW_UP_DAYS,
+  DEFAULT_PROMOTION_MODEL,
+} from "@/lib/promotion-packages";
 
 export default async function AgentDetailPage({
   params,
@@ -37,29 +41,7 @@ export default async function AgentDetailPage({
   if (!agent) notFound();
   const hasSubAgents = agent.slug === "assistant" || agent.slug === "marketer";
 
-  const [{ tasks, taskTotal }, { sas: subAgents, saTotal: subAgentTotal }] = await Promise.all([
-    Promise.all([
-      prisma.agentTask.findMany({
-        where: { agentId: agent.id },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-        select: {
-          id: true,
-          status: true,
-          label: true,
-          steps: true,
-          result: true,
-          error: true,
-          issueId: true,
-          createdAt: true,
-          startedAt: true,
-          completedAt: true,
-          triggeredBy: { select: { name: true, surname: true } },
-          registry: { select: { id: true } },
-        },
-      }),
-      prisma.agentTask.count({ where: { agentId: agent.id } }),
-    ]).then(([tasks, taskTotal]) => ({ tasks, taskTotal })),
+  const [{ sas: subAgents, saTotal: subAgentTotal }] = await Promise.all([
     agent.slug === "assistant" || agent.slug === "marketer"
       ? Promise.all([
           prisma.subAgent.findMany({
@@ -84,8 +66,6 @@ export default async function AgentDetailPage({
   ]);
 
   const settingsJson = JSON.stringify(agent.settings, null, 2);
-  const serializedTasks = JSON.parse(JSON.stringify(tasks)) as AgentTaskSummary[];
-  const initialTaskTotal = taskTotal;
   const serializedSubAgents = JSON.parse(JSON.stringify(subAgents)) as SubAgentSummary[];
 
   return (
@@ -96,9 +76,14 @@ export default async function AgentDetailPage({
           <h1>{agent.personaName ? `${agent.personaName} · ${agent.name}` : agent.name}</h1>
           <p className="muted">{agent.description}</p>
         </div>
-        <span className={`role-pill ${agent.enabled ? "" : "role-pill-muted"}`}>
-          {agent.enabled ? "Enabled" : "Disabled"}
-        </span>
+        <div className="page-heading-actions">
+          <span className={`role-pill ${agent.enabled ? "" : "role-pill-muted"}`}>
+            {agent.enabled ? "Enabled" : "Disabled"}
+          </span>
+          <Link className="button button-secondary" href={`/tasks?agent=${agent.id}`}>
+            Tasks
+          </Link>
+        </div>
       </div>
 
       <div className="agent-detail-grid">
@@ -201,15 +186,23 @@ export default async function AgentDetailPage({
             <div className="agent-settings-reference">
               <p className="muted"><strong>Marketer settings reference:</strong></p>
               <ul className="agent-settings-ref-list">
-                <li><code>advertisingUrl</code> — URL included in pitch emails linking to your ad submission page</li>
+                <li><code>advertisingUrl</code> — Ad-submission page the Marketer points interested businesses to</li>
                 <li><code>sponsoredArticle.enabled</code> — Allow sponsored article pitches (default: <code>true</code>)</li>
-                <li><code>sponsoredArticle.subject</code> — Subject line. Supports: <code>{"{businessName}"}</code>, <code>{"{publicationName}"}</code></li>
-                <li><code>sponsoredArticle.body</code> — Email body. Same variables plus <code>{"{agentName}"}</code>, <code>{"{advertisingUrl}"}</code></li>
                 <li><code>advertisement.enabled</code> — Allow advertisement pitches (default: <code>true</code>)</li>
-                <li><code>advertisement.subject</code> — Subject line. Same variables as above</li>
-                <li><code>advertisement.body</code> — Email body. Same variables as above</li>
               </ul>
-              <p className="muted agent-settings-note">Pitches are drafted from the business detail page. Configure sub agents below to enable email sending.</p>
+              <p className="muted agent-settings-note">Pitches are written by Claude (<code>promotion.model</code>) for each business from its details and the publication&rsquo;s rates, and kept as drafts on the task until sent. Replies on Marketer threads are answered automatically by the same model. Configure sub agents below to enable email sending.</p>
+              <p className="muted"><strong>Advertiser review &amp; promotion (&ldquo;Submit for Review&rdquo; on ads and articles):</strong></p>
+              <ul className="agent-settings-ref-list">
+                <li><code>promotion.model</code> — Claude model ID for the emails and replies (default: <code>{DEFAULT_PROMOTION_MODEL}</code>)</li>
+                <li><code>promotion.followUpDays</code> — Days without a reply before one follow-up is sent; <code>0</code> disables it (default: <code>{DEFAULT_PROMOTION_FOLLOW_UP_DAYS}</code>)</li>
+                <li><code>advertisingUrl</code> — Also given to advertisers who want to submit new ad materials</li>
+              </ul>
+              <p className="muted"><strong>Promote (sales campaigns from the Businesses page):</strong></p>
+              <ul className="agent-settings-ref-list">
+                <li><code>promotion.maxDiscountPercent</code> — Largest bundle discount the Marketer may give on an order, in percent; <code>0</code> disables discounts (default: <code>{DEFAULT_MAX_DISCOUNT_PERCENT}</code>, capped at 50)</li>
+              </ul>
+              <p className="muted agent-settings-note">The Marketer sells the issue&rsquo;s ads and sponsored articles (and placements in the publication&rsquo;s other upcoming issues) using the same model and follow-up timing. Individual prices stay firm unless the campaign&rsquo;s custom instructions allow a discount; bundles of two or more placements may be discounted up to the cap, which the server enforces. When the business agrees to buy, the purchased placements are created as draft ads and articles at the agreed prices.</p>
+              <p className="muted agent-settings-note">Prices come from each publication&rsquo;s <strong>Promotion rates</strong> (on the publication page); a publication without rates gets no price quotes. The first sub agent with SMTP configured handles new advertisers (a business keeps the sub agent it already talks to). Replies are read from its IMAP inbox and answered automatically. A sign-up is a written confirmation by email; no payment is collected.</p>
             </div>
           ) : null}
           </details>
@@ -220,27 +213,6 @@ export default async function AgentDetailPage({
       {agent.slug === "assistant" || agent.slug === "marketer" ? (
         <SubAgentList agentId={agent.id} initialSubAgents={serializedSubAgents} initialTotal={subAgentTotal} />
       ) : null}
-
-      {/* Task list */}
-      <AgentTaskList
-        agentId={agent.id}
-        initialTasks={serializedTasks}
-        initialTotal={initialTaskTotal}
-        subAgents={serializedSubAgents.map((sa) => ({ id: sa.id, name: sa.name }))}
-        emptyMessage={
-          agent.slug === "creative"
-            ? "No enhancements yet. Open any image detail page and use the \"Enhance\" button to start one."
-            : agent.slug === "designer"
-              ? "No tasks yet. Use \"Generate Layout\" on an issue to start one."
-              : agent.slug === "assistant"
-                ? "No drafts yet. Submit a story or add a business to trigger the first invite draft."
-                : agent.slug === "editor"
-                  ? "No reviews yet. Use the \"Review\" button on a submission or article to start one."
-                  : agent.slug === "marketer"
-                    ? "No pitches yet. Use the \"Pitch\" button on a business detail page to draft one."
-                    : undefined
-        }
-      />
     </>
   );
 }

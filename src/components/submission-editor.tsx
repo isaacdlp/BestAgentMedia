@@ -3,7 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent, type ChangeEvent } from "react";
+import { useState, type FormEvent } from "react";
+import { ImageDropzone } from "@/components/image-dropzone";
 
 type SubmissionImage = {
   id: string;
@@ -42,7 +43,6 @@ type SubmissionEditorProps = {
   businesses: BusinessOption[];
 };
 
-const maximumImageBytes = 10 * 1024 * 1024;
 const storyTypes = [
   ["community", "Community spotlight"],
   ["family", "People and families"],
@@ -74,33 +74,10 @@ export function SubmissionEditor({
     (image) => !removedImageIds.includes(image.id),
   );
 
-  function selectImages(event: ChangeEvent<HTMLInputElement>) {
-    const selectedFiles = Array.from(event.target.files ?? []);
-    const currentCount = visibleImages.length + newImages.length;
-    if (selectedFiles.some((file) => file.size > maximumImageBytes)) {
-      setError("Each image must be 10 MB or smaller.");
-      event.target.value = "";
-      return;
-    }
-    if (currentCount + selectedFiles.length > 5) {
-      setError("A submission can have no more than five images.");
-      event.target.value = "";
-      return;
-    }
-    if (
-      selectedFiles.some(
-        (file) =>
-          !["image/jpeg", "image/png", "image/webp"].includes(file.type),
-      )
-    ) {
-      setError("Upload JPEG, PNG, or WebP images only.");
-      event.target.value = "";
-      return;
-    }
-    setNewImages((current) => [...current, ...selectedFiles]);
+  function selectImages(files: File[]) {
+    setNewImages(files);
     setError(null);
     setNotice(null);
-    event.target.value = "";
   }
 
   async function saveSubmission(event: FormEvent<HTMLFormElement>) {
@@ -272,11 +249,11 @@ export function SubmissionEditor({
           <p className="muted">
             Upload up to five JPEG, PNG, or WebP images, maximum 10 MB each.
           </p>
-          <input
-            accept="image/jpeg,image/png,image/webp"
-            multiple
+          <ImageDropzone
+            files={newImages}
+            maxFiles={Math.max(0, 5 - visibleImages.length)}
             onChange={selectImages}
-            type="file"
+            showList={false}
           />
           {visibleImages.length || newImages.length ? (
             <ul className="submission-image-grid">

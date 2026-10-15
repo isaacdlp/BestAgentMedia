@@ -1,5 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { MessageDirection, Prisma } from "@prisma/client";
 import nodemailer from "nodemailer";
 import { prisma } from "@/lib/db";
@@ -37,21 +39,42 @@ function smtpDomain(config: SubAgentConfig): string {
   return config.smtpHost ?? "bestagentmedia.app";
 }
 
+const COMPANY_NAME = "Best Version Media";
+const SIGNATURE_PICTURE_CID = "signature-picture@bestagentmedia";
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Reads the sub agent's stored picture (media/sub-agents/<file>) or returns null when unavailable. */
+async function loadSignaturePicture(picturePath: string | null): Promise<Buffer | null> {
+  const filename = picturePath?.match(/^media\/sub-agents\/([a-z0-9._-]+)$/i)?.[1];
+  if (!filename) return null;
+  try {
+    return await readFile(resolve(process.cwd(), "media", "sub-agents", filename));
+  } catch {
+    return null;
+  }
+}
+
 export async function sendSubAgentEmail(opts: {
   subAgentId: number;
   /** AgentTask.id to link the new thread to. Omit when appending to an existing thread. */
   taskId?: string;
   toEmail: string;
   toName?: string;
-  subject: string;
+  /** Omit when appending to an existing thread to reply with "Re: <latest subject>". */
+  subject?: string;
   bodyText: string;
   bodyHtml?: string;
   /** Existing thread to append to (for follow-ups). Creates a new thread when omitted. */
   existingThreadId?: string;
+  /** Files to attach, read from disk when the message is sent. */
+  attachments?: { filename: string; path: string; contentType: string }[];
 }): Promise<{ threadId: string; messageId: string; sentTo: string }> {
   const subAgent = await prisma.subAgent.findUnique({
     where: { id: opts.subAgentId },
-    select: { id: true, name: true, config: true },
+    select: { id: true, name: true, picturePath: true, config: true },
   });
   if (!subAgent) throw new Error("Sub agent not found.");
 
@@ -65,16 +88,34 @@ export async function sendSubAgentEmail(opts: {
   const actualTo = dummyEmail || opts.toEmail;
 
   let inReplyTo: string | undefined;
+  let references: string[] = [];
   let threadId = opts.existingThreadId;
+  let subject = opts.subject;
 
   if (threadId) {
-    const last = await prisma.emailMessage.findFirst({
-      where: { thread: { id: threadId }, direction: MessageDirection.OUTBOUND },
-      orderBy: { createdAt: "desc" },
-      select: { messageId: true },
+    // Reply to the most recent message in the thread (either direction) and carry the full
+    // References chain so mail clients such as Gmail keep it in the same conversation.
+    const history = await prisma.emailMessage.findMany({
+      where: { threadId },
+      orderBy: { createdAt: "asc" },
+      select: { messageId: true, subject: true },
     });
-    if (last) inReplyTo = last.messageId;
+    const last = history[history.length - 1];
+    if (last) {
+      inReplyTo = last.messageId;
+      references = history.map((m) => m.messageId);
+      if (!subject) subject = last.subject;
+    }
+    if (!subject) {
+      const thread = await prisma.emailThread.findUnique({ where: { id: threadId }, select: { subject: true } });
+      subject = thread?.subject;
+    }
+    if (opts.subject === undefined && subject) {
+      subject = `Re: ${subject.replace(/^(\s*re:\s*)+/i, "")}`;
+    }
   }
+  if (!subject) throw new Error("Email subject is required.");
+  const finalSubject = subject;
 
   const transport = nodemailer.createTransport({
     host: config.smtpHost,
@@ -91,15 +132,36 @@ export async function sendSubAgentEmail(opts: {
     ? `"${config.smtpFromName}" <${config.smtpFromEmail}>`
     : config.smtpFromEmail;
 
+  // Every outbound email carries a signature with the agent's picture, name and company.
+  const signatureName = subAgent.name;
+  const picture = await loadSignaturePicture(subAgent.picturePath);
+  const signatureText = `\n\n--\n${signatureName}\n${COMPANY_NAME}`;
+  const signatureHtml =
+    `<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:16px;border-top:1px solid #ddd;padding-top:12px"><tr>` +
+    (picture
+      ? `<td style="padding-right:12px;vertical-align:middle"><img src="cid:${SIGNATURE_PICTURE_CID}" alt="${escapeHtml(signatureName)}" width="64" height="64" style="border-radius:50%;display:block"></td>`
+      : "") +
+    `<td style="vertical-align:middle;font-family:Arial,sans-serif;font-size:14px;line-height:1.4">` +
+    `<strong>${escapeHtml(signatureName)}</strong><br>${escapeHtml(COMPANY_NAME)}</td></tr></table>`;
+  const bodyHtml = opts.bodyHtml ?? opts.bodyText.replace(/\n/g, "<br>");
+
   const mailOptions: Parameters<typeof transport.sendMail>[0] = {
     from: fromAddress,
     to: actualTo,
-    subject: opts.subject,
-    text: opts.bodyText,
-    html: opts.bodyHtml ?? opts.bodyText.replace(/\n/g, "<br>"),
+    subject: finalSubject,
+    text: opts.bodyText + signatureText,
+    html: bodyHtml + signatureHtml,
+    attachments: [
+      ...(picture
+        ? [{ filename: "signature.jpg", content: picture, contentType: "image/jpeg", cid: SIGNATURE_PICTURE_CID, contentDisposition: "inline" as const }]
+        : []),
+      ...(opts.attachments ?? []),
+    ],
     headers: {
       "Message-ID": `<${messageId}>`,
-      ...(inReplyTo ? { "In-Reply-To": `<${inReplyTo}>`, References: `<${inReplyTo}>` } : {}),
+      ...(inReplyTo
+        ? { "In-Reply-To": `<${inReplyTo}>`, References: references.map((id) => `<${id}>`).join(" ") }
+        : {}),
     },
   };
 
@@ -114,7 +176,7 @@ export async function sendSubAgentEmail(opts: {
         taskId: opts.taskId ?? null,
         toEmail: opts.toEmail,
         toName: opts.toName,
-        subject: opts.subject,
+        subject: finalSubject,
       },
       select: { id: true },
     });
@@ -129,7 +191,7 @@ export async function sendSubAgentEmail(opts: {
       direction: MessageDirection.OUTBOUND,
       fromEmail: config.smtpFromEmail,
       toEmail: actualTo,
-      subject: opts.subject,
+      subject: finalSubject,
       bodyText: opts.bodyText,
       bodyHtml: opts.bodyHtml ?? null,
       sentAt: now,

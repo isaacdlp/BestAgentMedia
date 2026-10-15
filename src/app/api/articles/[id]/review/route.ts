@@ -48,8 +48,8 @@ export async function POST(
       title: true,
       body: true,
       status: true,
-      publications: {
-        select: { publication: { select: { name: true } } },
+      issues: {
+        select: { issue: { select: { name: true, publication: { select: { name: true } } } } },
       },
     },
   });
@@ -62,7 +62,8 @@ export async function POST(
     return NextResponse.json({ error: "Editorial review is not configured (missing CLAUDE_KEY)." }, { status: 503 });
   }
 
-  const publicationNames = article.publications.map((p) => p.publication.name).join(", ") || "unspecified";
+  const publicationNames = [...new Set(article.issues.map((i) => i.issue.publication.name))].join(", ") || "unspecified";
+  const issueNames = article.issues.map((i) => i.issue.name).join(", ") || "unassigned";
 
   const task = await launchAgentTask({
     agentId: agent.id,
@@ -71,7 +72,7 @@ export async function POST(
     steps: [
       step("info", `Starting editorial review for article "${article.title}"`),
       step("info", `Agent settings: model=${model}, maxOutputTokens=${maxOutputTokens}`),
-      step("info", `Article: "${article.title}" · status: ${article.status} · publication(s): ${publicationNames}`),
+      step("info", `Article: "${article.title}" · status: ${article.status} · publication(s): ${publicationNames} · issue(s): ${issueNames}`),
     ],
     work: async ({ log }) => {
       log("info", `Calling ${model} for editorial analysis`);

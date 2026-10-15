@@ -28,7 +28,15 @@ export default async function ArticlesPage({
 
   const where = {
     ...baseWhere,
-    ...(q ? { title: { contains: q, mode: "insensitive" as const } } : {}),
+    ...(q
+      ? {
+          OR: [
+            { title: { contains: q, mode: "insensitive" as const } },
+            { issues: { some: { issue: { name: { contains: q, mode: "insensitive" as const } } } } },
+            { issues: { some: { issue: { publication: { name: { contains: q, mode: "insensitive" as const } } } } } },
+          ],
+        }
+      : {}),
   };
 
   const orderBy =
@@ -48,7 +56,7 @@ export default async function ArticlesPage({
         status: true,
         updatedAt: true,
         sourceSubmission: { select: { id: true } },
-        publications: { select: { publication: { select: { name: true } } } },
+        issues: { select: { issue: { select: { name: true, publication: { select: { name: true } } } } } },
         _count: { select: { images: true, placements: true } },
       },
     }),
@@ -82,7 +90,7 @@ export default async function ArticlesPage({
           >
           <div className="table-wrap">
             <table>
-              <thead><tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Article</th><th>Publication(s)</th><th>Status</th><th>Images</th><th>Issue placements</th><th>Updated</th></tr></thead>
+              <thead><tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Article</th><th>Issues</th><th>Status</th><th>Images</th><th>Issue placements</th><th>Updated</th></tr></thead>
               <tbody>
                 {articles.map((article) => (
                   <tr key={article.id}>
@@ -91,7 +99,7 @@ export default async function ArticlesPage({
                       <Link className="text-link" href={`/articles/${article.id}`}>{article.title}</Link>
                       {article.sourceSubmission ? <span className="article-origin">From submission</span> : null}
                     </td>
-                    <td>{article.publications.map(({ publication }) => publication.name).join(", ") || "—"}</td>
+                    <td>{article.issues.map(({ issue }) => `${issue.publication.name} · ${issue.name}`).join(", ") || "—"}</td>
                     <td><span className="status-pill">{formatStatus(article.status)}</span></td>
                     <td>{article._count.images}</td>
                     <td>{article._count.placements}</td>

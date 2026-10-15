@@ -203,7 +203,6 @@ Rewrite the submission body to incorporate the information from the contributor'
         subAgentId: thread.subAgentId,
         toEmail: thread.toEmail,
         toName: thread.toName ?? undefined,
-        subject: thread.subject.startsWith("Re:") ? thread.subject : `Re: ${thread.subject}`,
         bodyText: lines.join("\n\n"),
         existingThreadId: threadId,
       });

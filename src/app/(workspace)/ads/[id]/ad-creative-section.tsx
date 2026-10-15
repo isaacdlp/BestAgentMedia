@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 interface Creative {
@@ -9,6 +9,10 @@ interface Creative {
   size: number;
 }
 
+/**
+ * The ad creative is not uploaded separately: it is one of the ad's image
+ * resources, chosen with "Set as Creative" in the image resources table.
+ */
 export function AdCreativeSection({
   adId,
   initial,
@@ -18,47 +22,18 @@ export function AdCreativeSection({
   initial: Creative | null;
   canEdit: boolean;
 }) {
-  const [creative, setCreative] = useState<Creative | null>(initial);
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  const imgSrc = `/api/ads/${adId}/creative`;
-
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setError(null);
-    setUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("creative", file);
-      const res = await fetch(`/api/ads/${adId}/creative`, { method: "POST", body: fd });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Upload failed.");
-      }
-      setCreative({ originalName: file.name, mimeType: file.type, size: file.size });
-      startTransition(() => router.refresh());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed.");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
-
-  async function handleRemove() {
+  async function handleClear() {
     setError(null);
     const res = await fetch(`/api/ads/${adId}/creative`, { method: "DELETE" });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setError(data.error ?? "Remove failed.");
+      setError(data.error ?? "Could not clear the creative.");
       return;
     }
-    setCreative(null);
     startTransition(() => router.refresh());
   }
 
@@ -69,59 +44,43 @@ export function AdCreativeSection({
       </div>
 
       <div style={{ padding: "0 1.5rem 1.25rem" }}>
-        {creative ? (
+        {initial ? (
           <div className="ad-creative-preview">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              key={creative.originalName}
-              src={`${imgSrc}?t=${Date.now()}`}
               alt="Ad creative"
               className="ad-creative-img"
+              key={`${initial.originalName}-${initial.size}`}
+              src={`/api/ads/${adId}/creative?v=${initial.size}`}
             />
             <p className="muted" style={{ fontSize: "0.8125rem", marginTop: "0.5rem" }}>
-              {creative.originalName} · {formatBytes(creative.size)}
+              {initial.originalName} · {formatBytes(initial.size)}
             </p>
           </div>
         ) : (
           <div className="ad-creative-empty">
             <p className="muted" style={{ fontSize: "0.875rem", margin: 0 }}>
-              No creative uploaded yet.
+              {canEdit
+                ? "No creative selected. Choose one of the image resources below with “Set as Creative”."
+                : "No creative selected yet."}
             </p>
           </div>
         )}
 
-        {error && (
-          <p className="ad-creative-error">{error}</p>
-        )}
+        {error && <p className="ad-creative-error">{error}</p>}
 
-        {canEdit && (
+        {canEdit && initial ? (
           <div className="ad-creative-actions">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              style={{ display: "none" }}
-              onChange={handleUpload}
-            />
             <button
+              className="button button-small button-danger"
+              disabled={isPending}
+              onClick={handleClear}
               type="button"
-              className="button button-small"
-              disabled={uploading || isPending}
-              onClick={() => fileInputRef.current?.click()}
             >
-              {uploading ? "Uploading…" : creative ? "Replace" : "Upload"}
+              Clear selection
             </button>
-            {creative && (
-              <button
-                type="button"
-                className="button button-small button-danger"
-                disabled={uploading || isPending}
-                onClick={handleRemove}
-              >
-                Remove
-              </button>
-            )}
           </div>
-        )}
+        ) : null}
       </div>
     </section>
   );

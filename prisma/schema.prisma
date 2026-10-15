@@ -23,7 +23,6 @@ enum SubmissionStatus {
 
 enum AdvertisementStatus {
   DRAFT
-  SUBMITTED
   IN_REVIEW
   APPROVED
   PUBLISHED
@@ -76,6 +75,52 @@ enum MessageDirection {
   INBOUND
 }
 
+/// The advertiser's verdict on the ad or article copy they were sent for review.
+enum PromotionContentStatus {
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+/// Where the paid promotion sale stands in the Marketer's conversation with the advertiser.
+enum PromotionDealStatus {
+  PROPOSED
+  INTERESTED
+  SIGNED_UP
+  DECLINED
+}
+
+/// Where a Promote sales conversation stands.
+enum PromotionSaleStatus {
+  /// First email sent, no answer yet.
+  PROPOSED
+  /// The business is discussing options or prices.
+  NEGOTIATING
+  /// The business agreed to buy; the purchased drafts were created.
+  PURCHASED
+  DECLINED
+}
+
+/// The advertiser's verdict in one review of their ad.
+enum AdReviewDecision {
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+/// Where an advertiser's ad review came from.
+enum AdReviewSource {
+  /// The public review page linked from the Marketer's email.
+  REVIEW_PAGE
+  /// An email reply the Marketer classified.
+  EMAIL
+}
+
+/// Which content a promotion package is sold with.
+enum PromotionPackageKind {
+  AD
+  ARTICLE
+}
+
 enum TaskSource {
   AGENT
   BUSINESS_IMPORT
@@ -112,22 +157,45 @@ model User {
   reachoutTasks       ReachoutTask[]
   passwordResetTokens PasswordResetToken[]
   tasks               Task[]
+  promotionDeals      PromotionDeal[]
+  promotionSales      PromotionSale[]
 }
 
 model Publication {
-  id              Int                        @id @default(autoincrement())
-  name            String                     @unique
-  slug            String                     @unique
-  description     String?
-  coverImagePath  String?
-  createdAt       DateTime                   @default(now())
-  updatedAt       DateTime                   @updatedAt
-  publisherAccess PublicationPublisher[]
-  submissions     ContentSubmission[]
-  advertisements  AdvertisementPublication[]
-  issues          Issue[]
-  articles        ArticlePublication[]
-  zipCodes        ZipCode[]
+  id                Int                    @id @default(autoincrement())
+  name              String                 @unique
+  slug              String                 @unique
+  description       String?
+  coverImagePath    String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  publisherAccess   PublicationPublisher[]
+  submissions       ContentSubmission[]
+  issues            Issue[]
+  zipCodes          ZipCode[]
+  /// Rate card the Marketer sells from (ad sizes and sponsored article placements).
+  promotionPackages PromotionPackage[]
+  promotionDeals    PromotionDeal[]
+  promotionSales    PromotionSale[]
+}
+
+/// One priced placement on a publication's rate card, per issue.
+model PromotionPackage {
+  id             Int                  @id @default(autoincrement())
+  publicationId  Int
+  kind           PromotionPackageKind
+  name           String
+  description    String               @default("")
+  priceCents     Int
+  position       Int                  @default(0)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  publication    Publication          @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  deals          PromotionDeal[]
+  advertisements Advertisement[]
+  saleItems      PromotionSaleItem[]
+
+  @@index([publicationId, kind, position])
 }
 
 model ZipCode {
@@ -256,6 +324,8 @@ model Business {
   submissions       ContentSubmission[]  @relation("SubmissionBusiness")
   articles          Article[]            @relation("ArticleBusiness")
   images            BusinessImage[]
+  promotionDeals    PromotionDeal[]
+  promotionSales    PromotionSale[]
 
   @@index([postalCode])
   @@index([city, stateCode])
@@ -294,36 +364,44 @@ model BusinessImportTask {
 }
 
 model Advertisement {
-  id                   String                     @id @default(cuid())
+  id                   String               @id @default(cuid())
   title                String
   description          String?
-  cta                  String?
-  status               AdvertisementStatus        @default(DRAFT)
+  status               AdvertisementStatus  @default(DRAFT)
   businessId           Int
-  creativeFileName     String?                    @unique
+  creativeFileName     String?              @unique
   creativeMimeType     String?
   creativeSize         Int?
   creativeOriginalName String?
   creativeImageId      String?
-  createdAt            DateTime                   @default(now())
-  updatedAt            DateTime                   @updatedAt
-  business             Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict)
-  publications         AdvertisementPublication[]
+  /// Ad style (size) from a publication's promotion rates; its price per issue gives the ad's cost.
+  promotionPackageId   Int?
+  /// Style name and cost as set when the ad was priced (price per issue x its issues in that publication).
+  styleName            String?
+  costCents            Int?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  business             Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  promotionPackage     PromotionPackage?    @relation(fields: [promotionPackageId], references: [id], onDelete: SetNull)
+  issues               AdvertisementIssue[]
   placements           IssuePagePlacement[]
   images               AdImage[]
+  promotionDeals       PromotionDeal[]
+  reviews              AdReview[]
+  saleItem             PromotionSaleItem?
 
   @@index([status, updatedAt])
   @@index([businessId, createdAt])
 }
 
-model AdvertisementPublication {
+model AdvertisementIssue {
   advertisementId String
-  publicationId   Int
+  issueId         String
   advertisement   Advertisement @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
-  publication     Publication   @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  issue           Issue         @relation(fields: [issueId], references: [id], onDelete: Cascade)
 
-  @@id([advertisementId, publicationId])
-  @@index([publicationId])
+  @@id([advertisementId, issueId])
+  @@index([issueId])
 }
 
 model AdImage {
@@ -355,19 +433,24 @@ model BusinessImage {
 }
 
 model Issue {
-  id              String      @id @default(cuid())
+  id              String               @id @default(cuid())
   publicationId   Int
   name            String
   slug            String
   description     String?
-  publicationDate DateTime    @db.Date
-  status          IssueStatus @default(DRAFT)
-  designJson      Json?       @db.JsonB
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  publication     Publication @relation(fields: [publicationId], references: [id], onDelete: Restrict)
+  publicationDate DateTime             @db.Date
+  status          IssueStatus          @default(DRAFT)
+  designJson      Json?                @db.JsonB
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  publication     Publication          @relation(fields: [publicationId], references: [id], onDelete: Restrict)
   pages           IssuePage[]
   agentTasks      AgentTask[]
+  articles        ArticleIssue[]
+  advertisements  AdvertisementIssue[]
+  promotionDeals  PromotionDeal[]
+  promotionSales  PromotionSale[]
+  saleItems       PromotionSaleItem[]
 
   @@unique([publicationId, publicationDate])
   @@unique([publicationId, slug])
@@ -417,23 +500,25 @@ model Article {
   sourceSubmission   ContentSubmission?   @relation("SubmissionArticle", fields: [sourceSubmissionId], references: [id], onDelete: SetNull)
   createdBy          User?                @relation("ArticleAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
   business           Business?            @relation("ArticleBusiness", fields: [businessId], references: [id], onDelete: SetNull)
-  publications       ArticlePublication[]
+  issues             ArticleIssue[]
   images             ArticleImage[]
   placements         IssuePagePlacement[]
+  promotionDeals     PromotionDeal[]
+  saleItem           PromotionSaleItem?
 
   @@index([status, updatedAt])
   @@index([createdByUserId, updatedAt])
   @@index([businessId])
 }
 
-model ArticlePublication {
-  articleId     String
-  publicationId Int
-  article       Article     @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+model ArticleIssue {
+  articleId String
+  issueId   String
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  issue     Issue   @relation(fields: [issueId], references: [id], onDelete: Cascade)
 
-  @@id([articleId, publicationId])
-  @@index([publicationId])
+  @@id([articleId, issueId])
+  @@index([issueId])
 }
 
 model ArticleImage {
@@ -501,19 +586,21 @@ model Agent {
 }
 
 model SubAgent {
-  id            Int            @id @default(autoincrement())
-  agentId       Int
-  name          String
-  soul          String         @db.Text
-  picturePath   String?
-  cellNumber    String?
-  config        Json           @default("{}") @db.JsonB
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  agent         Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  tasks         AgentTask[]
-  emailThreads  EmailThread[]
-  reachoutTasks ReachoutTask[]
+  id             Int             @id @default(autoincrement())
+  agentId        Int
+  name           String
+  soul           String          @db.Text
+  picturePath    String?
+  cellNumber     String?
+  config         Json            @default("{}") @db.JsonB
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  agent          Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  tasks          AgentTask[]
+  emailThreads   EmailThread[]
+  reachoutTasks  ReachoutTask[]
+  promotionDeals PromotionDeal[]
+  promotionSales PromotionSale[]
 
   @@index([agentId])
 }
@@ -538,6 +625,8 @@ model AgentTask {
   triggeredBy   User?           @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
   emailThreads  EmailThread[]
   registry      Task?
+  promotionDeal PromotionDeal?
+  promotionSale PromotionSale?
 
   @@index([agentId, createdAt])
   @@index([status, createdAt])
@@ -577,21 +666,164 @@ model Task {
 }
 
 model EmailThread {
-  id           String         @id @default(cuid())
-  subAgentId   Int
-  taskId       String?
-  toEmail      String
-  toName       String?
-  subject      String
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  subAgent     SubAgent       @relation(fields: [subAgentId], references: [id], onDelete: Cascade)
-  task         AgentTask?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  messages     EmailMessage[]
-  reachoutTask ReachoutTask?
+  id            String         @id @default(cuid())
+  subAgentId    Int
+  taskId        String?
+  toEmail       String
+  toName        String?
+  subject       String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  subAgent      SubAgent       @relation(fields: [subAgentId], references: [id], onDelete: Cascade)
+  task          AgentTask?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  messages      EmailMessage[]
+  reachoutTask  ReachoutTask?
+  promotionDeal PromotionDeal?
+  promotionSale PromotionSale?
 
   @@index([subAgentId, createdAt])
   @@index([taskId])
+}
+
+// An ad or article sent to its advertiser for review by a Marketer sub agent, together with
+// the paid promotion the Marketer is selling for the issue. The conversation runs as the
+// linked AgentTask (Ongoing while open, Success when the advertiser signs up, Stopped when
+// they decline) on the linked EmailThread.
+model PromotionDeal {
+  id                   Int                    @id @default(autoincrement())
+  agentTaskId          String                 @unique
+  businessId           Int
+  advertisementId      String?
+  articleId            String?
+  issueId              String?
+  /// Publication whose rate card is offered (the issue's, or the business ZIP's).
+  publicationId        Int?
+  subAgentId           Int?
+  threadId             String?                @unique
+  /// Custom instructions from staff for the Marketer, applied to every message in the conversation.
+  instructions         String                 @default("") @db.Text
+  /// Secret for the public ad review page (/review/[token]); a credential, not a record ID. Ads only.
+  reviewToken          String?                @unique
+  /// Ad creative file last emailed to the advertiser, so each new artwork is sent once.
+  sentCreativeFileName String?
+  contentStatus        PromotionContentStatus @default(PENDING)
+  status               PromotionDealStatus    @default(PROPOSED)
+  /// Changes the advertiser asked for, newest last.
+  requestedChanges     String?                @db.Text
+  /// Chosen package; name and price are kept as agreed even if the rate card changes later.
+  packageId            Int?
+  packageName          String?
+  priceCents           Int?
+  optedOut             Boolean                @default(false)
+  followUpSentAt       DateTime?
+  lastInboundAt        DateTime?
+  signedUpAt           DateTime?
+  createdByUserId      String?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  agentTask            AgentTask              @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+  business             Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  advertisement        Advertisement?         @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
+  article              Article?               @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  issue                Issue?                 @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  publication          Publication?           @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+  package              PromotionPackage?      @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  subAgent             SubAgent?              @relation(fields: [subAgentId], references: [id], onDelete: SetNull)
+  thread               EmailThread?           @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  createdBy            User?                  @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  adReviews            AdReview[]
+
+  @@index([businessId, createdAt])
+  @@index([advertisementId, createdAt])
+  @@index([articleId, createdAt])
+  @@index([status, createdAt])
+}
+
+// "Promote" on the Businesses page: a Marketer sub agent sells paid promotions (display ads and
+// sponsored articles) in an upcoming issue to one business by email. The conversation runs as the
+// linked AgentTask (Ongoing while open, Success once the business buys, Stopped when it declines)
+// on the linked EmailThread. When the business agrees to buy, the Marketer creates the purchased
+// draft ads and articles; each purchase is a PromotionSaleItem with its agreed price.
+model PromotionSale {
+  id              Int                 @id @default(autoincrement())
+  agentTaskId     String              @unique
+  businessId      Int
+  /// The issue the campaign was launched for; other upcoming issues of the publication may be sold too.
+  issueId         String?
+  publicationId   Int
+  subAgentId      Int?
+  threadId        String?             @unique
+  /// Custom instructions from staff for the Marketer, applied to every message in the conversation.
+  instructions    String              @default("") @db.Text
+  status          PromotionSaleStatus @default(PROPOSED)
+  /// The offer currently on the table, as last stated by the Marketer: { items, discountPercent }.
+  proposal        Json?               @db.JsonB
+  optedOut        Boolean             @default(false)
+  followUpSentAt  DateTime?
+  lastInboundAt   DateTime?
+  purchasedAt     DateTime?
+  createdByUserId String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  agentTask       AgentTask           @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+  business        Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  issue           Issue?              @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  publication     Publication         @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  subAgent        SubAgent?           @relation(fields: [subAgentId], references: [id], onDelete: SetNull)
+  thread          EmailThread?        @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  createdBy       User?               @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  items           PromotionSaleItem[]
+
+  @@index([businessId, createdAt])
+  @@index([issueId, createdAt])
+  @@index([status, createdAt])
+}
+
+/// One promotion a business bought in a PromotionSale, with the draft ad or article created for it.
+/// Package name and prices are kept as agreed even if the rate card changes later.
+model PromotionSaleItem {
+  id              Int                  @id @default(autoincrement())
+  saleId          Int
+  kind            PromotionPackageKind
+  packageId       Int?
+  packageName     String
+  issueId         String?
+  listPriceCents  Int
+  /// Bundle discount agreed for the order this item was bought in.
+  discountPercent Int                  @default(0)
+  priceCents      Int
+  advertisementId String?              @unique
+  articleId       String?              @unique
+  createdAt       DateTime             @default(now())
+  sale            PromotionSale        @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  package         PromotionPackage?    @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  issue           Issue?               @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  advertisement   Advertisement?       @relation(fields: [advertisementId], references: [id], onDelete: SetNull)
+  article         Article?             @relation(fields: [articleId], references: [id], onDelete: SetNull)
+
+  @@index([saleId])
+  @@index([issueId])
+}
+
+// One advertiser review of an ad (approval or requested changes), from the public review page
+// or a classified email reply. Kept in order on the ad and given to the Creative for redesigns.
+model AdReview {
+  id               Int              @id @default(autoincrement())
+  advertisementId  String
+  promotionDealId  Int?
+  source           AdReviewSource
+  decision         AdReviewDecision
+  comments         String           @default("") @db.Text
+  /// Name the advertiser gave on the review page, if any.
+  reviewerName     String?
+  /// Ad creative file shown when the review was made; null when no artwork existed yet.
+  creativeFileName String?
+  createdAt        DateTime         @default(now())
+  advertisement    Advertisement    @relation(fields: [advertisementId], references: [id], onDelete: Cascade)
+  promotionDeal    PromotionDeal?   @relation(fields: [promotionDealId], references: [id], onDelete: SetNull)
+
+  @@index([advertisementId, createdAt])
+  @@index([promotionDealId])
 }
 
 model EmailMessage {

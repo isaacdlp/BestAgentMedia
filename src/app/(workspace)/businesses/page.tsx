@@ -38,6 +38,8 @@ export default async function BusinessesPage({
           { primaryCategory: { contains: q, mode: "insensitive" as const } },
           { city: { contains: q, mode: "insensitive" as const } },
           { email: { contains: q, mode: "insensitive" as const } },
+          { postalCode: { contains: q } },
+          { stateCode: { contains: q, mode: "insensitive" as const } },
         ],
       }
     : baseWhere;
@@ -83,7 +85,8 @@ export default async function BusinessesPage({
         <div className="page-heading-actions">
           <span className="role-pill">{total} businesses</span>
           {isAdmin ? <Link className="button button-secondary" href="/businesses/import/new">Import</Link> : null}
-          {isAdmin ? <Link className="button button-secondary" href="/businesses/reachout/new">Outreach</Link> : null}
+          {isAdmin ? <Link className="button button-secondary" href="/businesses/reachout/new">Onboard</Link> : null}
+          {isAdmin ? <Link className="button button-secondary" href="/businesses/promote/new">Promote</Link> : null}
           {isAdmin ? <Link className="button button-primary" href="/businesses/new">Create business</Link> : null}
         </div>
       </div>

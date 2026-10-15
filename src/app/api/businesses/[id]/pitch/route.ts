@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import { createBusinessPitch } from "@/lib/marketer-agent";
-import { getRegistryTask } from "@/lib/tasks";
 
 const bodySchema = z.object({
   pitchType: z.enum(["sponsored_article", "advertisement"]),
@@ -33,8 +32,7 @@ export async function POST(
   }
 
   try {
-    const agentTaskId = await createBusinessPitch(businessId, parsed.data.pitchType, user.id);
-    const task = await getRegistryTask({ agentTaskId });
+    const task = await createBusinessPitch(businessId, parsed.data.pitchType, user.id);
     return NextResponse.json({ task }, { status: 202 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

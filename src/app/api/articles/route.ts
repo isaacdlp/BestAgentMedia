@@ -1,7 +1,7 @@
 import { ArticleStatus, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getPublicationScope } from "@/lib/access";
+import { resolveIssueIds } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import {
   persistArticleImages,
@@ -15,15 +15,7 @@ const articleSchema = z.object({
   title: z.string().trim().min(1).max(200),
   body: z.string().trim().min(1).max(50_000),
   status: z.nativeEnum(ArticleStatus),
-  publicationIds: z
-    .array(
-      z
-        .string()
-        .regex(/^[1-9]\d*$/)
-        .transform(Number)
-        .pipe(z.number().int().positive().safe()),
-    )
-    .min(1),
+  issueIds: z.array(z.string().regex(/^[w-]{1,64}$/)).min(1),
   businessId: z
     .string()
     .regex(/^[1-9]\d*$/)
@@ -55,20 +47,15 @@ export async function POST(request: Request) {
     title: formData.get("title"),
     body: formData.get("body"),
     status: formData.get("status") ?? ArticleStatus.DRAFT,
-    publicationIds: formData.getAll("publicationIds"),
+    issueIds: formData.getAll("issueIds"),
     businessId: rawBusinessId || undefined,
   });
   if (!parsed.success) {
-    return NextResponse.json({ error: "Enter an article title, body, status, and at least one publication." }, { status: 400 });
+    return NextResponse.json({ error: "Enter an article title, body, status, and at least one issue." }, { status: 400 });
   }
-  const publicationScope = await getPublicationScope(user);
-  if (!publicationScope) return NextResponse.json({ error: "You cannot assign publications." }, { status: 403 });
-  const publications = await prisma.publication.findMany({
-    where: { id: { in: parsed.data.publicationIds }, ...publicationScope },
-    select: { id: true },
-  });
-  if (publications.length !== new Set(parsed.data.publicationIds).size) {
-    return NextResponse.json({ error: "Choose only publications assigned to your workspace." }, { status: 403 });
+  const issueIds = await resolveIssueIds(user, parsed.data.issueIds);
+  if (!issueIds) {
+    return NextResponse.json({ error: "Choose only issues of publications assigned to your workspace." }, { status: 403 });
   }
 
   let images;
@@ -89,7 +76,7 @@ export async function POST(request: Request) {
         status: parsed.data.status,
         createdByUserId: user.id,
         businessId: parsed.data.businessId ?? null,
-        publications: { create: publications.map(({ id }) => ({ publicationId: id })) },
+        issues: { create: issueIds.map((issueId) => ({ issueId })) },
         images: {
           create: images.map((image) => ({
             fileName: image.fileName,

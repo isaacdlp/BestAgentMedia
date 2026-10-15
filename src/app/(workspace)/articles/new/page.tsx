@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { ArticleEditor } from "@/components/article-editor";
-import { getPublicationScope } from "@/lib/access";
+import { getPublicationScope, listIssueOptions } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
@@ -12,12 +12,8 @@ export default async function NewArticlePage() {
   }
   const scope = await getPublicationScope(user);
   if (!scope) redirect("/dashboard");
-  const [publications, businesses] = await Promise.all([
-    prisma.publication.findMany({
-      where: scope,
-      orderBy: { name: "asc" },
-      select: { id: true, name: true },
-    }),
+  const [issues, businesses] = await Promise.all([
+    listIssueOptions(user),
     prisma.business.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true },
@@ -30,11 +26,11 @@ export default async function NewArticlePage() {
         <div>
           <p className="eyebrow">EDITORIAL</p>
           <h1>Create article</h1>
-          <p className="muted">Write a new piece and assign it to one or more publications.</p>
+          <p className="muted">Write a new piece and assign it to one or more issues.</p>
         </div>
       </div>
       <section className="panel">
-        <ArticleEditor article={null} businesses={businesses} canEdit publications={publications} />
+        <ArticleEditor article={null} businesses={businesses} canEdit issues={issues} />
       </section>
     </>
   );

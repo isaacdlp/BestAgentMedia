@@ -3,12 +3,16 @@ import { notFound } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { AgentBadge } from "@/components/agent-badge";
 import { TaskResultSummary, TaskStepLog, type TaskResult, type TaskStep } from "@/components/agent-task-list";
+import { PromotionDealDetails } from "@/components/promotion-deal-panel";
+import { PromotionSaleDetails } from "@/components/promotion-sale-panel";
 import { TaskAutoRefresh } from "@/components/task-auto-refresh";
-import { CreativeTaskView, EmailDraftView, LayoutTaskView, TaskControls } from "@/components/task-views";
+import { CreativeTaskView, EmailDraftView, LayoutTaskView, TaskControls, type CreativeFollowUp } from "@/components/task-views";
 import { requireUser } from "@/lib/auth";
 import type { CreativeTaskResult } from "@/lib/creative-agent";
 import { prisma } from "@/lib/db";
 import type { LayoutDesign } from "@/lib/issue-design";
+import { getPromotionDealByTask } from "@/lib/promotion-deals";
+import { getPromotionSaleByTask } from "@/lib/promotion-sales";
 import { formatTaskDuration, isTaskActive, TASK_STATUS_LABELS } from "@/lib/task-status";
 import { getTaskScope, getTaskTemplate } from "@/lib/tasks";
 
@@ -19,6 +23,8 @@ const TEMPLATE_EYEBROWS = {
   creative: "CREATIVE",
   "email-draft": "EMAIL DRAFT",
   review: "EDITORIAL REVIEW",
+  promotion: "ADVERTISER REVIEW & PROMOTION",
+  sale: "PAID PROMOTION SALE",
   generic: "AGENT TASK",
 } as const;
 
@@ -67,6 +73,9 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
   const launchedBy = task.createdBy
     ? [task.createdBy.name, task.createdBy.surname].filter(Boolean).join(" ")
     : "Automatic";
+  const promotionDeal =
+    template === "promotion" && task.agentTask ? await getPromotionDealByTask(task.agentTask.id) : null;
+  const promotionSale = template === "sale" && task.agentTask ? await getPromotionSaleByTask(task.agentTask.id) : null;
 
   return (
     <>
@@ -74,13 +83,15 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
       <div className="page-heading">
         <div>
           <Link className="text-link back-link" href="/tasks">← All tasks</Link>
-          <p className="eyebrow">{TEMPLATE_EYEBROWS[template]}</p>
           {task.agent ? (
-            <AgentBadge
-              agentSlug={task.agent.slug}
-              subAgentId={task.agentTask?.subAgentId ?? task.reachoutTask?.subAgent?.id}
-            />
+            <div style={{ margin: "14px 0 18px" }}>
+              <AgentBadge
+                agentSlug={task.agent.slug}
+                subAgentId={task.agentTask?.subAgentId ?? task.reachoutTask?.subAgent?.id}
+              />
+            </div>
           ) : null}
+          <p className="eyebrow">{TEMPLATE_EYEBROWS[template]}</p>
           <h1>{task.name}</h1>
           <p className="muted">
             {task.agent ? `${task.agent.name} agent` : "No agent"} · started {task.createdAt.toLocaleString()}
@@ -101,8 +112,11 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
         <div className="task-progress-banner" role="status">
           <span aria-hidden="true" className="enhance-spinner task-progress-spinner" />
           <span>
-            This task is running in the background. You can leave this page — you will be notified when it
-            finishes.
+            {template === "promotion"
+              ? "The Marketer is handling this conversation and answers the advertiser's replies automatically. You will be notified when they sign up or decline."
+              : template === "sale"
+                ? "The Marketer is selling to this business and answers its replies automatically. When the business buys, the purchased ads and articles are created as drafts and you are notified."
+                : "This task is running in the background. You can leave this page — you will be notified when it finishes."}
           </span>
         </div>
       ) : null}
@@ -208,6 +222,29 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
         </section>
       ) : null}
 
+      {template === "promotion" && promotionDeal ? (
+        <section className="panel task-section">
+          <div className="panel-heading">
+            <h2>Review &amp; promotion</h2>
+            {promotionDeal.advertisementId ? (
+              <Link className="text-link" href={`/ads/${promotionDeal.advertisementId}`}>Open advertisement →</Link>
+            ) : promotionDeal.articleId ? (
+              <Link className="text-link" href={`/articles/${promotionDeal.articleId}`}>Open article →</Link>
+            ) : null}
+          </div>
+          <PromotionDealDetails deal={promotionDeal} showConversationLink={isAdmin} showTaskLink={false} />
+        </section>
+      ) : null}
+
+      {template === "sale" && promotionSale ? (
+        <section className="panel task-section">
+          <div className="panel-heading">
+            <h2>Promotion sale</h2>
+          </div>
+          <PromotionSaleDetails sale={promotionSale} showConversationLink={isAdmin} />
+        </section>
+      ) : null}
+
       {task.source === "AGENT" ? (
         <section className="panel task-section">
           <h2>Activity log</h2>
@@ -259,33 +296,53 @@ function CreativeSection({
   canAct: boolean;
 }) {
   const original = creativeOriginal(result);
-  const iterate =
-    result.trigger === "generate-ad"
-      ? result.referenceImageIds?.length
-        ? {
-            endpoint: "/api/creative/generate-ad",
-            body: { adId: result.parentId, imageIds: result.referenceImageIds },
-            customInstructions: result.customInstructions,
-          }
-        : null
-      : {
-          endpoint: "/api/creative/enhance",
-          body: {
-            imageType: result.imageType,
-            imageId: result.imageId,
-            parentId: result.parentId,
-            iterateFromTaskId: agentTaskId,
-          },
-          customInstructions: "",
-        };
+  const followUps: CreativeFollowUp[] = [];
+  if (result.trigger === "generate-ad") {
+    const referenceImageIds = result.referenceImageIds ?? [];
+    // A result that was already saved or discarded has no generated ad left to revise.
+    if (result.status === "pending_review" || result.status === "iterating") {
+      followUps.push({
+        label: "Iterate",
+        endpoint: "/api/creative/generate-ad",
+        body: { adId: result.parentId, imageIds: referenceImageIds, iterateFromTaskId: agentTaskId },
+        customInstructions: "",
+        placeholder: `e.g. "bolder headline", "make the phone number larger", "warmer colours"…`,
+        hint: "A new task revises this generated ad in the background, keeping its size unless you name another.",
+      });
+    }
+    if (referenceImageIds.length) {
+      followUps.push({
+        label: "Generate again",
+        endpoint: "/api/creative/generate-ad",
+        body: { adId: result.parentId, imageIds: referenceImageIds },
+        customInstructions: result.customInstructions,
+        placeholder: `e.g. "bolder headline", "use the logo prominently"…`,
+        hint: "A new generation task starts over in the background with the same reference images.",
+      });
+    }
+  } else if (result.status === "pending_review") {
+    // A result that was already accepted or discarded has no image left to iterate from.
+    followUps.push({
+      label: "Iterate",
+      endpoint: "/api/creative/enhance",
+      body: {
+        imageType: result.imageType,
+        imageId: result.imageId,
+        parentId: result.parentId,
+        iterateFromTaskId: agentTaskId,
+      },
+      customInstructions: "",
+      placeholder: `e.g. "brighten the sky", "crop tighter on the subject"…`,
+      hint: "A new enhancement task runs in the background using this result as its source.",
+    });
+  }
 
   return (
     <CreativeTaskView
       agentTaskId={agentTaskId}
       canAct={canAct}
       isPublicationCover={result.imageType === "publication"}
-      // A result that was already accepted or discarded has no image left to iterate from.
-      iterate={result.status === "pending_review" || result.trigger === "generate-ad" ? iterate : null}
+      followUps={followUps}
       originalImageSrc={original.src}
       recordHref={original.href}
       recordLabel={original.label}

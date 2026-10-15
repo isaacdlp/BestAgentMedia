@@ -118,6 +118,16 @@ function currentScenePages(engine: CreativeEngine): IssuePageInfo[] {
   }));
 }
 
+function reasonText(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  return typeof reason === "string" ? reason : "";
+}
+
+/** CE.SDK license problems (missing, invalid or expired key), as opposed to real editor failures. */
+function isLicenseError(reason: unknown): boolean {
+  return /licen[sc]e/i.test(reasonText(reason));
+}
+
 export function IssuePageEditor({
   issueId,
   pages,
@@ -210,6 +220,31 @@ export function IssuePageEditor({
     let disposed = false;
     let instance: CreativeEditorSDK | null = null;
     const cleanups: (() => void)[] = [];
+
+    // Without a license key the engine reports license problems as errors. The canvas still works
+    // in evaluation mode, so keep them out of the page and the Next.js error overlay.
+    const swallowLicenseError = (event: PromiseRejectionEvent | ErrorEvent) => {
+      const reason = "reason" in event ? event.reason : event.error ?? event.message;
+      if (isLicenseError(reason)) {
+        event.preventDefault();
+        console.warn("[IssueEditor] CE.SDK license notice (running unlicensed):", reasonText(reason));
+      }
+    };
+    window.addEventListener("unhandledrejection", swallowLicenseError);
+    window.addEventListener("error", swallowLicenseError);
+    // CE.SDK also logs its evaluation banner and "[UBQ]" notices with console.error, which the
+    // Next.js overlay shows as an error. They are informational, so log them at info level.
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      const text = args.map((arg) => (typeof arg === "string" ? arg : "")).join(" ");
+      if (/\[UBQ\]|For Evaluation Purposes Only/.test(text)) console.info(...args);
+      else originalConsoleError.apply(console, args);
+    };
+    cleanups.push(() => {
+      window.removeEventListener("unhandledrejection", swallowLicenseError);
+      window.removeEventListener("error", swallowLicenseError);
+      console.error = originalConsoleError;
+    });
 
     const initialize = async () => {
       const [{ default: CreativeEditor }, plugins, { DesignEditorConfig }] = await Promise.all([
@@ -372,7 +407,9 @@ export function IssuePageEditor({
     };
 
     initialize().catch((error: unknown) => {
-      if (!disposed) {
+      if (!disposed && isLicenseError(error)) {
+        console.warn("[IssueEditor] CE.SDK license notice (running unlicensed):", reasonText(error));
+      } else if (!disposed) {
         setEditorError(error instanceof Error ? error.message : "The issue editor could not be loaded.");
       }
     });

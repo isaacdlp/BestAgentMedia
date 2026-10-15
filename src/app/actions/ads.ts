@@ -4,7 +4,7 @@ import { AdvertisementStatus, UserRole } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { getAdvertisementScope } from "@/lib/access";
+import { getAdvertisementScope, resolveIssueIds } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
@@ -19,17 +19,13 @@ const optionalText = z.preprocess(
 const adCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: optionalText,
-  cta: optionalText,
   businessId: z.preprocess(
     (v) => (typeof v === "string" && /^[1-9]\d*$/.test(v) ? Number(v) : v),
     z.number().int().positive().safe(),
   ),
-  publicationIds: z.preprocess(
+  issueIds: z.preprocess(
     (v) => (typeof v === "string" ? v.split(",").filter(Boolean) : Array.isArray(v) ? v : []),
-    z.array(z.preprocess(
-      (id) => (typeof id === "string" && /^[1-9]\d*$/.test(id) ? Number(id) : id),
-      z.number().int().positive().safe(),
-    )).min(1),
+    z.array(recordIdSchema),
   ),
 });
 
@@ -37,15 +33,55 @@ const adUpdateSchema = z.object({
   id: recordIdSchema,
   title: z.string().trim().min(1).max(200),
   description: optionalText,
-  cta: optionalText,
-  publicationIds: z.preprocess(
+  issueIds: z.preprocess(
     (v) => (typeof v === "string" ? v.split(",").filter(Boolean) : Array.isArray(v) ? v : []),
-    z.array(z.preprocess(
-      (id) => (typeof id === "string" && /^[1-9]\d*$/.test(id) ? Number(id) : id),
-      z.number().int().positive().safe(),
-    )).min(1),
+    z.array(recordIdSchema),
   ),
 });
+
+const packageIdSchema = z.preprocess(
+  (v) => (typeof v === "string" && /^[1-9]\d*$/.test(v) ? Number(v) : null),
+  z.number().int().positive().safe().nullable(),
+);
+
+const costSchema = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() !== "" ? Number(v) : null),
+  z.number().finite().min(0).max(1_000_000).nullable(),
+);
+
+/** Cost entered in dollars, as whole cents (null when blank or invalid). */
+function parseCostCents(value: FormDataEntryValue | null): number | null {
+  const parsed = costSchema.safeParse(value);
+  if (!parsed.success || parsed.data === null) return null;
+  return Math.round(parsed.data * 100);
+}
+
+/**
+ * Checks the chosen ad style against the ad's issues and prices the ad. The style must be an ad
+ * rate of one of their publications, and one is required whenever those publications have ad
+ * rates. The cost defaults to the rate's price per issue times the ad's issues in that
+ * publication; an entered cost (for example a client discount) replaces it.
+ */
+async function resolveAdStyle(
+  packageId: number | null,
+  issueIds: string[],
+  enteredCostCents: number | null,
+): Promise<{ promotionPackageId: number | null; styleName: string | null; costCents: number | null }> {
+  const unpriced = { promotionPackageId: null, styleName: null, costCents: null };
+  if (!issueIds.length) return unpriced;
+  const issues = await prisma.issue.findMany({ where: { id: { in: issueIds } }, select: { publicationId: true } });
+  const publicationIds = [...new Set(issues.map((issue) => issue.publicationId))];
+  const rates = await prisma.promotionPackage.findMany({
+    where: { publicationId: { in: publicationIds }, kind: "AD" },
+    select: { id: true, name: true, priceCents: true, publicationId: true },
+  });
+  if (!rates.length) return unpriced;
+  if (packageId === null) throw new Error("Select a style to calculate the cost of the ad.");
+  const rate = rates.find((item) => item.id === packageId);
+  if (!rate) throw new Error("The selected style is not an ad rate of the selected issues' publications.");
+  const issueCount = issues.filter((issue) => issue.publicationId === rate.publicationId).length;
+  return { promotionPackageId: rate.id, styleName: rate.name, costCents: enteredCostCents ?? rate.priceCents * issueCount };
+}
 
 export async function createAdvertisement(formData: FormData) {
   const user = await requireUser();
@@ -53,98 +89,54 @@ export async function createAdvertisement(formData: FormData) {
     redirect("/dashboard");
   }
 
-  const rawPublicationIds = formData.getAll("publicationIds");
+  const rawIssueIds = formData.getAll("issueIds");
   const parsed = adCreateSchema.safeParse({
     title: formData.get("title"),
     description: formData.get("description"),
-    cta: formData.get("cta"),
     businessId: formData.get("businessId"),
-    publicationIds: rawPublicationIds.length ? rawPublicationIds : formData.get("publicationIds"),
+    issueIds: rawIssueIds.length ? rawIssueIds : formData.get("issueIds"),
   });
   if (!parsed.success) {
     throw new Error("Invalid advertisement data: " + parsed.error.issues[0]?.message);
   }
 
-  const { title, description, cta, businessId, publicationIds } = parsed.data;
+  const { title, description, businessId, issueIds } = parsed.data;
 
   // Verify business exists
   const business = await prisma.business.findUnique({ where: { id: businessId }, select: { id: true } });
   if (!business) throw new Error("Business not found.");
 
-  // Verify publications exist (and scope for publishers)
-  if (user.role === UserRole.EDITOR) {
-    const assignments = await prisma.publicationPublisher.findMany({
-      where: { userId: user.id },
-      select: { publicationId: true },
-    });
-    const allowed = new Set(assignments.map((a) => a.publicationId));
-    if (!publicationIds.every((id) => allowed.has(id))) {
-      throw new Error("One or more selected publications are not accessible.");
-    }
-  } else {
-    const pubs = await prisma.publication.findMany({
-      where: { id: { in: publicationIds } },
-      select: { id: true },
-    });
-    if (pubs.length !== publicationIds.length) throw new Error("One or more publications not found.");
-  }
+  // Verify issues exist and belong to publications the user can access
+  const scopedIssueIds = await resolveIssueIds(user, issueIds);
+  if (!scopedIssueIds) throw new Error("One or more selected issues are not accessible.");
+  const adStyle = await resolveAdStyle(
+    packageIdSchema.parse(formData.get("packageId")),
+    scopedIssueIds,
+    parseCostCents(formData.get("cost")),
+  );
 
   // Pull description and images from the business
   const businessForImport = await prisma.business.findUnique({
     where: { id: businessId },
     select: { description: true },
   });
-  const businessImages = await prisma.businessImage.findMany({
-    where: { businessId },
-    orderBy: { position: "asc" },
-    select: { fileName: true, originalName: true, mimeType: true, size: true },
-  });
 
   const ad = await prisma.advertisement.create({
     data: {
       title,
       description: description ?? businessForImport?.description ?? null,
-      cta,
       businessId,
-      publications: {
-        create: publicationIds.map((publicationId) => ({ publicationId })),
+      ...adStyle,
+      issues: {
+        create: scopedIssueIds.map((issueId) => ({ issueId })),
       },
     },
     select: { id: true },
   });
 
   // Copy business images to the new ad
-  if (businessImages.length > 0) {
-    const { adImageDirectory } = await import("@/lib/ad-images");
-    const { businessImageDirectory } = await import("@/lib/business-images");
-    const { randomUUID } = await import("node:crypto");
-    const { copyFile, mkdir } = await import("node:fs/promises");
-    const { resolve, extname } = await import("node:path");
-
-    await mkdir(adImageDirectory, { recursive: true });
-
-    const copied: { advertisementId: string; fileName: string; originalName: string; mimeType: string; size: number; position: number }[] = [];
-    const newFileNames: string[] = [];
-    try {
-      for (const [i, img] of businessImages.slice(0, 20).entries()) {
-        const ext = extname(img.fileName);
-        const newFileName = `${randomUUID()}${ext}`;
-        await copyFile(
-          resolve(businessImageDirectory, img.fileName),
-          resolve(adImageDirectory, newFileName),
-        );
-        newFileNames.push(newFileName);
-        copied.push({ advertisementId: ad.id, fileName: newFileName, originalName: img.originalName, mimeType: img.mimeType, size: img.size, position: i });
-      }
-    } catch {
-      const { removeAdImageFiles } = await import("@/lib/ad-images");
-      await removeAdImageFiles(newFileNames);
-    }
-
-    if (copied.length > 0) {
-      await prisma.adImage.createMany({ data: copied });
-    }
-  }
+  const { copyBusinessImagesToAd } = await import("@/lib/business-image-copies");
+  await copyBusinessImagesToAd(businessId, ad.id);
 
   revalidatePath("/ads");
   redirect(`/ads/${ad.id}`);
@@ -156,19 +148,18 @@ export async function updateAdvertisement(formData: FormData) {
     redirect("/dashboard");
   }
 
-  const rawPublicationIds = formData.getAll("publicationIds");
+  const rawIssueIds = formData.getAll("issueIds");
   const parsed = adUpdateSchema.safeParse({
     id: formData.get("id"),
     title: formData.get("title"),
     description: formData.get("description"),
-    cta: formData.get("cta"),
-    publicationIds: rawPublicationIds.length ? rawPublicationIds : formData.get("publicationIds"),
+    issueIds: rawIssueIds.length ? rawIssueIds : formData.get("issueIds"),
   });
   if (!parsed.success) {
     throw new Error("Invalid advertisement data: " + parsed.error.issues[0]?.message);
   }
 
-  const { id, title, description, cta, publicationIds } = parsed.data;
+  const { id, title, description, issueIds } = parsed.data;
 
   const scope = await getAdvertisementScope(user);
   if (!scope) redirect("/dashboard");
@@ -176,28 +167,24 @@ export async function updateAdvertisement(formData: FormData) {
   const ad = await prisma.advertisement.findFirst({ where: { id, ...scope }, select: { id: true } });
   if (!ad) throw new Error("Advertisement not found or not accessible.");
 
-  // Verify publications scope for publishers
-  if (user.role === UserRole.EDITOR) {
-    const assignments = await prisma.publicationPublisher.findMany({
-      where: { userId: user.id },
-      select: { publicationId: true },
-    });
-    const allowed = new Set(assignments.map((a) => a.publicationId));
-    if (!publicationIds.every((pubId) => allowed.has(pubId))) {
-      throw new Error("One or more selected publications are not accessible.");
-    }
-  }
+  const scopedIssueIds = await resolveIssueIds(user, issueIds);
+  if (!scopedIssueIds) throw new Error("One or more selected issues are not accessible.");
+  const adStyle = await resolveAdStyle(
+    packageIdSchema.parse(formData.get("packageId")),
+    scopedIssueIds,
+    parseCostCents(formData.get("cost")),
+  );
 
   await prisma.$transaction([
-    prisma.advertisementPublication.deleteMany({ where: { advertisementId: id } }),
+    prisma.advertisementIssue.deleteMany({ where: { advertisementId: id } }),
     prisma.advertisement.update({
       where: { id: ad.id },
       data: {
         title,
         description,
-        cta,
-        publications: {
-          create: publicationIds.map((publicationId) => ({ publicationId })),
+        ...adStyle,
+        issues: {
+          create: scopedIssueIds.map((issueId) => ({ issueId })),
         },
       },
     }),
@@ -218,8 +205,14 @@ export async function updateAdStatus(formData: FormData) {
   const scope = await getAdvertisementScope(user);
   if (!scope) redirect("/dashboard");
 
-  const ad = await prisma.advertisement.findFirst({ where: { id, ...scope }, select: { id: true } });
+  const ad = await prisma.advertisement.findFirst({
+    where: { id, ...scope },
+    select: { id: true, _count: { select: { issues: true } } },
+  });
   if (!ad) throw new Error("Advertisement not found or not accessible.");
+  if (status === AdvertisementStatus.PUBLISHED && ad._count.issues === 0) {
+    throw new Error("Assign the ad to at least one issue before publishing it.");
+  }
 
   await prisma.advertisement.update({ where: { id: ad.id }, data: { status } });
 
@@ -252,83 +245,6 @@ export async function deleteAdImage(formData: FormData) {
   await removeAdImageFiles([image.fileName]);
 
   revalidatePath(`/ads/${adId}`);
-}
-
-export async function importFromBusiness(formData: FormData) {
-  const user = await requireUser();
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR) {
-    redirect("/dashboard");
-  }
-
-  const id = recordIdSchema.parse(formData.get("id"));
-  const scope = await getAdvertisementScope(user);
-  if (!scope) redirect("/dashboard");
-
-  const ad = await prisma.advertisement.findFirst({
-    where: { id, ...scope },
-    select: { id: true, businessId: true },
-  });
-  if (!ad) throw new Error("Advertisement not found or not accessible.");
-
-  const business = await prisma.business.findUnique({
-    where: { id: ad.businessId },
-    select: { description: true },
-  });
-  if (!business) throw new Error("Business not found.");
-
-  const businessImages = await prisma.businessImage.findMany({
-    where: { businessId: ad.businessId },
-    orderBy: { position: "asc" },
-    select: { fileName: true, originalName: true, mimeType: true, size: true },
-  });
-
-  const { adImageDirectory } = await import("@/lib/ad-images");
-  const { businessImageDirectory } = await import("@/lib/business-images");
-  const { randomUUID } = await import("node:crypto");
-  const { copyFile, mkdir } = await import("node:fs/promises");
-  const { resolve, extname } = await import("node:path");
-
-  await mkdir(adImageDirectory, { recursive: true });
-
-  const currentCount = await prisma.adImage.count({ where: { advertisementId: id } });
-  const toImport = businessImages.slice(0, Math.max(0, 20 - currentCount));
-
-  const copied: { fileName: string; originalName: string; mimeType: string; size: number; position: number }[] = [];
-  const newFileNames: string[] = [];
-  try {
-    for (const [i, img] of toImport.entries()) {
-      const ext = extname(img.fileName);
-      const newFileName = `${randomUUID()}${ext}`;
-      await copyFile(
-        resolve(businessImageDirectory, img.fileName),
-        resolve(adImageDirectory, newFileName),
-      );
-      newFileNames.push(newFileName);
-      copied.push({
-        fileName: newFileName,
-        originalName: img.originalName,
-        mimeType: img.mimeType,
-        size: img.size,
-        position: currentCount + i,
-      });
-    }
-  } catch (error) {
-    const { removeAdImageFiles } = await import("@/lib/ad-images");
-    await removeAdImageFiles(newFileNames);
-    throw error;
-  }
-
-  await prisma.$transaction([
-    prisma.advertisement.update({
-      where: { id: ad.id },
-      data: { description: business.description },
-    }),
-    ...(copied.length > 0
-      ? [prisma.adImage.createMany({ data: copied.map((img) => ({ ...img, advertisementId: id })) })]
-      : []),
-  ]);
-
-  revalidatePath(`/ads/${id}`);
 }
 
 export async function setAdImageAsCreative(formData: FormData) {
@@ -381,6 +297,10 @@ export async function setAdImageAsCreative(formData: FormData) {
   });
 
   if (oldFileName) await removeCreativeFile(oldFileName);
+
+  // The Marketer sends the advertiser the revised artwork for approval.
+  const { scheduleAdArtworkNotification } = await import("@/lib/promotion-deals");
+  scheduleAdArtworkNotification(ad.id);
 
   revalidatePath(`/ads/${adId}`);
 }

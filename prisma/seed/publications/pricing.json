@@ -1,0 +1,17 @@
+{
+  "_note": "DEMO DATA, not Best Version Media pricing. The seed prices each package as basePriceUsd x audience factor x affluence index. The audience factor comes from the Census population of the publication's ZIP codes: (population / 100,000) ^ 0.35, clamped to 0.6-2.0. The affluence index is a hand-picked demo assumption for each market (1.0 = average). Rates are only created for publications that have none, so edits made in the app are kept.",
+  "affluence": {
+    "Weston Neighbors": 1.6,
+    "Lexington Living": 1.45,
+    "Westwood Living": 1.35,
+    "Swampscott Neighbors": 1.15,
+    "MetroWest Living": 1.0
+  },
+  "defaultAffluence": 1.0,
+  "packages": [
+    { "kind": "AD", "name": "Quarter-page ad", "description": "Quarter-page display ad in the issue.", "basePriceUsd": 175 },
+    { "kind": "AD", "name": "Half-page ad", "description": "Half-page display ad in the issue.", "basePriceUsd": 300 },
+    { "kind": "AD", "name": "Full-page ad", "description": "Full-page display ad in the issue.", "basePriceUsd": 525 },
+    { "kind": "ARTICLE", "name": "Sponsored feature", "description": "The article runs as a one-page sponsored feature with the business's logo and contact details.", "basePriceUsd": 400 }
+  ]
+}

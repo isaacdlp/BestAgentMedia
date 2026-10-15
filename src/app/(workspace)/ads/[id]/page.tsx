@@ -1,59 +1,75 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
-import { updateAdStatus, deleteAdImage, importFromBusiness, setAdImageAsCreative } from "@/app/actions/ads";
+import { updateAdStatus, deleteAdImage, setAdImageAsCreative } from "@/app/actions/ads";
 import { AdCreativeSection } from "./ad-creative-section";
 import { AdDetailForm } from "./ad-detail-form";
 import { AdImagesForm } from "./ad-images-form";
 import { AdGenerateButton } from "./ad-generate-button";
-import { getAdvertisementScope } from "@/lib/access";
+import { AdReviewsList } from "@/components/ad-reviews-list";
+import { SubmitReviewButton } from "@/components/submit-review-button";
+import { getAdvertisementScope, listIssueOptions } from "@/lib/access";
+import { listAdReviews, reviewLinkState, reviewUrl } from "@/lib/ad-reviews";
+import { listAdStyleOptions } from "@/lib/ad-styles";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getLatestPromotionDeal } from "@/lib/promotion-deals";
+import { formatCents } from "@/lib/promotion-packages";
 
 export default async function AdDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const user = await requireUser();
   const scope = await getAdvertisementScope(user);
   if (!scope) redirect("/dashboard");
 
-  const { id } = await params;
+  const [{ id }, { tab: tabParam }] = await Promise.all([params, searchParams]);
   if (!/^[\w-]{1,64}$/.test(id)) notFound();
+  const tab = tabParam === "reviews" ? "reviews" : "details";
 
-  const [ad, creativeAgent] = await Promise.all([
+  const [ad, creativeAgent, marketerAgent, promotionDeal, reviews] = await Promise.all([
     prisma.advertisement.findFirst({
       where: { id, ...scope },
       select: {
         id: true,
         title: true,
         description: true,
-        cta: true,
         status: true,
         creativeOriginalName: true,
         creativeMimeType: true,
         creativeSize: true,
         creativeImageId: true,
-        business: { select: { id: true, name: true } },
-        publications: { select: { publication: { select: { id: true, name: true } } } },
+        creativeFileName: true,
+        promotionPackageId: true,
+        styleName: true,
+        costCents: true,
+        promotionPackage: { select: { name: true, description: true } },
+        business: { select: { id: true, name: true, email: true } },
+        issues: { select: { issue: { select: { id: true, name: true, publicationId: true, publication: { select: { name: true } } } } } },
         images: { orderBy: { position: "asc" }, select: { id: true, originalName: true, mimeType: true, size: true, position: true } },
       },
     }),
     prisma.agent.findUnique({ where: { slug: "creative" }, select: { enabled: true } }),
+    prisma.agent.findUnique({ where: { slug: "marketer" }, select: { enabled: true } }),
+    getLatestPromotionDeal({ advertisementId: id }),
+    listAdReviews(id),
   ]);
   if (!ad) notFound();
 
   const canEdit = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
+  const reviewOpen = promotionDeal?.agentTask.status === "RUNNING" || promotionDeal?.agentTask.status === "PENDING";
+  const reviewLink =
+    canEdit && promotionDeal?.reviewToken
+      ? { url: reviewUrl(promotionDeal.reviewToken), open: (await reviewLinkState(promotionDeal)) === "open" }
+      : null;
 
-  const allPublications = canEdit
-    ? user.role === UserRole.ADMIN
-      ? await prisma.publication.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } })
-      : await prisma.publication.findMany({
-          where: { publisherAccess: { some: { userId: user.id } } },
-          orderBy: { name: "asc" },
-          select: { id: true, name: true },
-        })
+  const allIssues = canEdit ? await listIssueOptions(user) : [];
+  const adStyles = canEdit
+    ? await listAdStyleOptions([...allIssues, ...ad.issues.map(({ issue }) => issue)].map((issue) => issue.publicationId))
     : [];
 
   return (
@@ -64,21 +80,37 @@ export default async function AdDetailPage({
           <p className="eyebrow">ADVERTISING · {ad.business.name}</p>
           <h1>{ad.title}</h1>
           <p className="muted">
-            Ad details, assigned publications, and image resources.
+            Ad details, assigned issues, and image resources.
           </p>
         </div>
         <div className="page-heading-actions">
-          <span className="status-pill">{formatStatus(ad.status)}</span>
-          {canEdit ? (
-            <form action={importFromBusiness}>
-              <input name="id" type="hidden" value={ad.id} />
-              <button className="button button-small" type="submit">Import from business</button>
-            </form>
+          {canEdit && marketerAgent?.enabled ? (
+            <SubmitReviewButton
+              apiPath={`/api/ads/${ad.id}/submit-review`}
+              disabled={!ad.business.email || reviewOpen}
+            />
           ) : null}
         </div>
       </div>
 
-      <div className="business-detail-grid">
+      <div className="sub-tabs">
+        <Link className={`sub-tab ${tab === "details" ? "sub-tab-active" : ""}`} href={`/ads/${ad.id}`}>
+          Details
+        </Link>
+        <Link className={`sub-tab ${tab === "reviews" ? "sub-tab-active" : ""}`} href={`/ads/${ad.id}?tab=reviews`}>
+          Reviews{reviews.length > 0 ? ` (${reviews.length})` : ""}
+        </Link>
+      </div>
+
+      {tab === "reviews" ? (
+        <AdReviewsList
+          currentCreativeFileName={ad.creativeFileName}
+          reviewLink={reviewLink}
+          reviews={reviews}
+          showTaskLinks={canEdit}
+        />
+      ) : (
+      <div className="business-detail-grid" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
           {/* Status */}
           {canEdit ? (
@@ -88,16 +120,22 @@ export default async function AdDetailPage({
               </div>
               <form action={updateAdStatus} className="business-form" style={{ padding: "1rem 1.5rem" }}>
                 <input name="id" type="hidden" value={ad.id} />
-                <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-                  <select aria-label="Update status" defaultValue={ad.status} name="status">
-                    <option value="DRAFT">Draft</option>
-                    <option value="SUBMITTED">Submitted</option>
-                    <option value="IN_REVIEW">In review</option>
-                    <option value="APPROVED">Approved</option>
-                    <option value="PUBLISHED">Published</option>
-                    <option value="DECLINED">Declined</option>
-                  </select>
-                  <button className="button button-small" type="submit">Update</button>
+                <div className="review-status">
+                  <div aria-label="Review status" className="review-status-options" role="radiogroup">
+                    {[
+                      ["DRAFT", "Draft"],
+                      ["IN_REVIEW", "In review"],
+                      ["APPROVED", "Approved"],
+                      ["PUBLISHED", "Published"],
+                      ["DECLINED", "Declined"],
+                    ].map(([value, label]) => (
+                      <label className={`review-status-option review-status-${value.toLowerCase()}`} key={value}>
+                        <input defaultChecked={ad.status === value} name="status" type="radio" value={value} />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <button className="button button-small" type="submit">Update status</button>
                 </div>
               </form>
             </section>
@@ -114,40 +152,6 @@ export default async function AdDetailPage({
             canEdit={canEdit}
           />
 
-          {/* Ad details form */}
-          <section className="panel">
-            <div className="panel-heading">
-              <h2>Ad details</h2>
-            </div>
-            {canEdit ? (
-              <AdDetailForm
-                adId={ad.id}
-                title={ad.title}
-                description={ad.description}
-                cta={ad.cta}
-                businessId={ad.business.id}
-                businessName={ad.business.name}
-                allPublications={allPublications}
-                initialPublications={ad.publications.map((p) => p.publication)}
-              />
-            ) : (
-              <div className="business-form">
-                <div className="business-form-grid">
-                  <ReadField label="Ad name" value={ad.title} />
-                  <ReadField label="Description" value={ad.description} />
-                  <ReadField label="Call to action" value={ad.cta} />
-                  <ReadField label="Business" value={ad.business.name} />
-                  <ReadField
-                    label="Publications"
-                    value={ad.publications.map((p) => p.publication.name).join(", ") || "—"}
-                  />
-                </div>
-              </div>
-            )}
-          </section>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
           {/* Ad image resources */}
           <section className="panel">
             <div className="panel-heading">
@@ -157,6 +161,9 @@ export default async function AdDetailPage({
                   adId={ad.id}
                   images={ad.images.map((img) => ({ id: img.id, originalName: img.originalName }))}
                   agentEnabled={creativeAgent?.enabled ?? false}
+                  styleName={ad.promotionPackage?.name ?? ad.styleName}
+                  styleDescription={ad.promotionPackage?.description ?? null}
+                  reviewCount={reviews.length}
                 />
               ) : null}
             </div>
@@ -233,8 +240,43 @@ export default async function AdDetailPage({
             ) : null}
           </section>
 
+          {/* Ad details form */}
+          <section className="panel">
+            <div className="panel-heading">
+              <h2>Ad details</h2>
+            </div>
+            {canEdit ? (
+              <AdDetailForm
+                adId={ad.id}
+                title={ad.title}
+                description={ad.description}
+                businessId={ad.business.id}
+                businessName={ad.business.name}
+                allIssues={allIssues}
+                initialIssues={ad.issues.map(({ issue }) => ({ id: issue.id, name: `${issue.publication.name} · ${issue.name}`, publicationId: issue.publicationId }))}
+                styles={adStyles}
+                initialStyleId={ad.promotionPackageId}
+                initialCostCents={ad.costCents}
+              />
+            ) : (
+              <div className="business-form">
+                <div className="business-form-grid">
+                  <ReadField label="Ad name" value={ad.title} />
+                  <ReadField label="Description" value={ad.description} />
+                  <ReadField label="Style" value={ad.styleName} />
+                  <ReadField label="Cost" value={ad.costCents != null ? formatCents(ad.costCents) : null} />
+                  <ReadField label="Business" value={ad.business.name} />
+                  <ReadField
+                    label="Issues"
+                    value={ad.issues.map(({ issue }) => `${issue.publication.name} · ${issue.name}`).join(", ") || "—"}
+                  />
+                </div>
+              </div>
+            )}
+          </section>
         </div>
       </div>
+      )}
     </>
   );
 }
@@ -248,10 +290,6 @@ function ReadField({ label, value }: { label: string; value: string | null | und
       </p>
     </div>
   );
-}
-
-function formatStatus(status: string) {
-  return status.replaceAll("_", " ").toLowerCase();
 }
 
 function formatBytes(bytes: number) {

@@ -151,6 +151,101 @@ export async function updatePublication(
   redirect(`/publications/${publication.id}`);
 }
 
+export type PublicationRatesActionState = {
+  error?: string;
+  /** The saved rate card, so the editor picks up ids of newly created rates. */
+  saved?: { id: number; kind: "AD" | "ARTICLE"; name: string; description: string; priceCents: number }[];
+};
+
+const publicationRatesSchema = z.object({
+  id: z
+    .string()
+    .regex(/^[1-9]\d*$/)
+    .transform(Number)
+    .pipe(z.number().int().positive().safe()),
+  rates: z
+    .string()
+    .max(100_000)
+    .transform((value, context) => {
+      try {
+        return JSON.parse(value) as unknown;
+      } catch {
+        context.addIssue({ code: "custom", message: "The rates could not be read." });
+        return z.NEVER;
+      }
+    })
+    .pipe(
+      z
+        .array(
+          z.object({
+            id: z.number().int().positive().nullable(),
+            kind: z.enum(["AD", "ARTICLE"]),
+            name: z.string().trim().min(1, "Every rate needs a name.").max(120),
+            description: z.string().trim().max(500),
+            priceUsd: z.number().finite().min(0, "Prices cannot be negative.").max(1_000_000),
+          }),
+        )
+        .max(40, "A publication can have at most 40 rates."),
+    ),
+});
+
+/** Replaces a publication's rate card. Deals keep the package name and price they were agreed at. */
+export async function updatePublicationRates(
+  _previousState: PublicationRatesActionState,
+  formData: FormData,
+): Promise<PublicationRatesActionState> {
+  const user = await requireUser();
+  if (user.role !== UserRole.ADMIN) {
+    redirect("/dashboard");
+  }
+
+  const parsed = publicationRatesSchema.safeParse({
+    id: formData.get("id"),
+    rates: formData.get("rates"),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Check the rates and try again." };
+  }
+  const { id: publicationId, rates } = parsed.data;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.promotionPackage.findMany({ where: { publicationId }, select: { id: true } });
+      const existingIds = new Set(existing.map((item) => item.id));
+      const keptIds = new Set(rates.flatMap((rate) => (rate.id !== null && existingIds.has(rate.id) ? [rate.id] : [])));
+
+      await tx.promotionPackage.deleteMany({ where: { publicationId, id: { notIn: [...keptIds] } } });
+
+      const positions = { AD: 0, ARTICLE: 0 };
+      for (const rate of rates) {
+        const data = {
+          kind: rate.kind,
+          name: rate.name,
+          description: rate.description,
+          priceCents: Math.round(rate.priceUsd * 100),
+          position: positions[rate.kind]++,
+        };
+        if (rate.id !== null && keptIds.has(rate.id)) {
+          await tx.promotionPackage.update({ where: { id: rate.id }, data });
+        } else {
+          await tx.promotionPackage.create({ data: { ...data, publicationId } });
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Unable to save publication rates:", error);
+    return { error: "The rates could not be saved." };
+  }
+
+  revalidatePath(`/publications/${publicationId}`);
+  const saved = await prisma.promotionPackage.findMany({
+    where: { publicationId },
+    orderBy: [{ kind: "asc" }, { position: "asc" }],
+    select: { id: true, kind: true, name: true, description: true, priceCents: true },
+  });
+  return { saved };
+}
+
 async function validateCoverImage(file: File) {
   if (file.size > maximumCoverImageBytes) {
     return new Error("Cover images must be 10 MB or smaller.");

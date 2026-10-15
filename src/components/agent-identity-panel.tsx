@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { ImageDropzone } from "@/components/image-dropzone";
 import { updateAgentPersonaName } from "@/app/actions/agents";
 
 type Props = {
@@ -14,14 +15,13 @@ type Props = {
 /** Name and picture for agents that have no sub-agents (Designer, Creative, Copywriter). */
 export function AgentIdentityPanel({ agentId, agentName, personaName, picturePath }: Props) {
   const router = useRouter();
-  const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0] ?? null;
+  function handleFiles(files: File[]) {
+    const f = files[0] ?? null;
     setFile(f);
     setPreview(f ? URL.createObjectURL(f) : null);
   }
@@ -38,7 +38,6 @@ export function AgentIdentityPanel({ agentId, agentName, personaName, picturePat
       if (!res.ok) throw new Error(result.error ?? "Upload failed.");
       setFile(null);
       setPreview(null);
-      if (fileRef.current) fileRef.current.value = "";
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed.");
@@ -64,7 +63,7 @@ export function AgentIdentityPanel({ agentId, agentName, personaName, picturePat
           <div className="sub-agent-avatar-lg sub-agent-avatar-placeholder-lg">{initial}</div>
         )}
         <div className="sub-agent-picture-controls">
-          <input accept="image/jpeg,image/png,image/webp" onChange={handleChange} ref={fileRef} type="file" />
+          <ImageDropzone compact files={file ? [file] : []} multiple={false} onChange={handleFiles} />
           {error ? <p className="form-error">{error}</p> : null}
           {file ? (
             <button

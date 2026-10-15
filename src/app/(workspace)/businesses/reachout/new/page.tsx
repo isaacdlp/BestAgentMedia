@@ -113,11 +113,11 @@ export default function NewReachoutPage() {
     <>
       <div className="page-heading">
         <div>
-          <p className="eyebrow"><Link href="/businesses/reachout">← Reachout tasks</Link></p>
+          <p className="eyebrow"><Link href="/businesses">← Businesses</Link></p>
           <h1>New onboarding task</h1>
           <p className="muted">Select businesses to start the onboarding email sequence for.</p>
-          <AgentBadge agentSlug="assistant" />
         </div>
+        <AgentBadge agentSlug="assistant" />
       </div>
 
       <section className="panel">
@@ -159,11 +159,11 @@ export default function NewReachoutPage() {
             <div className="reachout-new-table-head">
               <label className="reachout-new-check">
                 <input
+                  aria-label="Select all eligible businesses"
                   checked={allEligibleSelected}
                   onChange={toggleAll}
                   type="checkbox"
                 />
-                <span className="muted" style={{ fontSize: 11 }}>All eligible</span>
               </label>
               <span className="muted reachout-new-col-name">Business</span>
               <span className="muted reachout-new-col-email">Email</span>

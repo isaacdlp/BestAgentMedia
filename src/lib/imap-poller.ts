@@ -8,6 +8,8 @@ import { getSubAgentConfig } from "@/lib/sub-agent-email";
 import { handleReachoutInboundMessage, checkReachoutReminders } from "@/lib/reachout-tasks";
 import { handleClarificationReply } from "@/lib/clarification-reply";
 import { handleGenericInboundMessage } from "@/lib/sub-agent-reply";
+import { checkPromotionFollowUps, handlePromotionInboundMessage } from "@/lib/promotion-deals";
+import { checkPromotionSaleFollowUps, handlePromotionSaleInboundMessage } from "@/lib/promotion-sales";
 import { maximumSubmissionImageBytes } from "@/lib/submission-images";
 import { prisma } from "@/lib/db";
 
@@ -186,10 +188,14 @@ export async function pollSubAgentInbox(subAgentId: number): Promise<PollerResul
           await client.messageFlagsAdd({ uid: msg.uid }, ["\\Seen"]);
           result.processed++;
 
-          // Reachout-specific reply (claim URL template, RUNNING tasks only)
+          // Reachout-specific reply (Claude, with the claim link as context; RUNNING tasks only)
           void handleReachoutInboundMessage(threadId);
           // Incorporate reply into submission for clarification threads
           void handleClarificationReply(threadId);
+          // Marketer reply and deal tracking for ads/articles submitted for advertiser review
+          void handlePromotionInboundMessage(threadId);
+          // Marketer sales dialog for Promote campaigns (closes the sale and creates the purchased drafts)
+          void handlePromotionSaleInboundMessage(threadId);
           // LLM-generated reply for all other threads
           void handleGenericInboundMessage(threadId);
         } catch (msgErr) {
@@ -204,6 +210,54 @@ export async function pollSubAgentInbox(subAgentId: number): Promise<PollerResul
   }
 
   void checkReachoutReminders();
+  void checkPromotionFollowUps().catch((err) => console.error("[PromotionDeal] follow-up check failed:", err));
+  void checkPromotionSaleFollowUps().catch((err) => console.error("[PromotionSale] follow-up check failed:", err));
 
   return result;
+}
+
+/**
+ * Deletes the messages with the given Message-IDs from the sub agent's INBOX (when IMAP is
+ * configured). Returns how many mailbox messages were removed. Throws if the mailbox cannot be
+ * reached so callers do not drop the local copy while the inbox still holds the messages.
+ */
+export async function deleteInboxMessages(subAgentId: number, messageIds: string[]): Promise<number> {
+  const ids = messageIds.map((id) => id.replace(/^<|>$/g, "").trim()).filter(Boolean);
+  if (!ids.length) return 0;
+
+  const subAgent = await prisma.subAgent.findUnique({ where: { id: subAgentId }, select: { config: true } });
+  if (!subAgent) throw new Error("Sub agent not found.");
+  const config = getSubAgentConfig(subAgent.config);
+  if (!config.imapHost || !config.imapUser || !config.imapPassword) return 0;
+
+  const { ImapFlow: ImapFlowClass } = await importImapFlow();
+  const client: ImapFlow = new ImapFlowClass({
+    host: config.imapHost,
+    port: config.imapPort ?? 993,
+    secure: config.imapSecure ?? true,
+    auth: { user: config.imapUser, pass: config.imapPassword },
+    logger: false,
+  });
+
+  let removed = 0;
+  await client.connect();
+  try {
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      const uids = new Set<number>();
+      for (const id of ids) {
+        const found = await client.search({ header: { "message-id": id } }, { uid: true });
+        for (const uid of found || []) uids.add(uid);
+      }
+      if (uids.size) {
+        await client.messageDelete([...uids], { uid: true });
+        removed = uids.size;
+      }
+    } finally {
+      lock.release();
+    }
+  } finally {
+    await client.logout();
+  }
+  return removed;
 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { EmailThreadList } from "@/components/email-thread-view";
+import { ImageDropzone } from "@/components/image-dropzone";
 
 type SubAgentConfig = {
   smtpFromEmail?: string;
@@ -96,7 +97,6 @@ export default function SubAgentDetailPage() {
   const [uploadingPic, setUploadingPic] = useState(false);
   const [picError, setPicError] = useState("");
   const [picPreview, setPicPreview] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const [checkingInbox, setCheckingInbox] = useState(false);
   const [inboxResult, setInboxResult] = useState<string | null>(null);
@@ -170,11 +170,10 @@ export default function SubAgentDetailPage() {
     }
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
+  function handlePictureFiles(files: File[]) {
+    const f = files[0] ?? null;
     setPictureFile(f);
-    setPicPreview(URL.createObjectURL(f));
+    setPicPreview(f ? URL.createObjectURL(f) : null);
   }
 
   async function handleUploadPicture() {
@@ -192,7 +191,6 @@ export default function SubAgentDetailPage() {
       if (!res.ok) throw new Error(result.error ?? "Upload failed.");
       setPictureFile(null);
       setPicPreview(null);
-      if (fileRef.current) fileRef.current.value = "";
       void load();
     } catch (err) {
       setPicError(err instanceof Error ? err.message : "Upload failed.");
@@ -233,6 +231,9 @@ export default function SubAgentDetailPage() {
           </p>
           <h1>{data.name}</h1>
         </div>
+        <Link className="button button-secondary" href={`/tasks?agent=${agentId}&subAgent=${subAgentId}`}>
+          Tasks
+        </Link>
       </div>
 
       <form onSubmit={(e) => void handleSave(e)}>
@@ -258,7 +259,7 @@ export default function SubAgentDetailPage() {
                 </div>
               )}
               <div className="sub-agent-picture-controls">
-                <input accept="image/jpeg,image/png,image/webp" onChange={handleFileChange} ref={fileRef} type="file" />
+                <ImageDropzone compact files={pictureFile ? [pictureFile] : []} multiple={false} onChange={handlePictureFiles} />
                 {picError ? <p className="form-error">{picError}</p> : null}
                 {pictureFile ? (
                   <button

@@ -36,6 +36,8 @@ export type TaskTemplate =
   | "creative"
   | "email-draft"
   | "review"
+  | "promotion"
+  | "sale"
   | "generic";
 
 export function getTaskTemplate(source: TaskSource, agentSlug: string | null, result: unknown): TaskTemplate {
@@ -44,6 +46,8 @@ export function getTaskTemplate(source: TaskSource, agentSlug: string | null, re
   if (agentSlug === "designer") return "layout";
   if (agentSlug === "creative") return "creative";
   const record = typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {};
+  if (record.contentType === "promotion") return "promotion";
+  if (record.contentType === "sale") return "sale";
   if (typeof record.emailTo === "string") return "email-draft";
   if (record.contentType === "submission" || record.contentType === "article") return "review";
   return "generic";

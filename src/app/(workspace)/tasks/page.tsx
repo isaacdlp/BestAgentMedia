@@ -58,8 +58,8 @@ export default async function TasksPage({
   const statusParam = typeof sp.status === "string" ? sp.status : "";
   const statusFilter = STATUS_FILTERS.find((filter) => filter.value === statusParam) ?? STATUS_FILTERS[0];
 
-  const agentId = /^[1-9]d*$/.test(String(sp.agent ?? "")) ? Number(sp.agent) : null;
-  const subAgentId = agentId && /^[1-9]d*$/.test(String(sp.subAgent ?? "")) ? Number(sp.subAgent) : null;
+  const agentId = /^[1-9]\d*$/.test(String(sp.agent ?? "")) ? Number(sp.agent) : null;
+  const subAgentId = agentId && /^[1-9]\d*$/.test(String(sp.subAgent ?? "")) ? Number(sp.subAgent) : null;
   const agentFilter = agentId
     ? await prisma.agent.findUnique({
         where: { id: agentId },

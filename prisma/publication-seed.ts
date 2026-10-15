@@ -128,6 +128,7 @@ export async function seedPublications(prisma: PrismaClient) {
   console.info(
     `Seeded ${publications.length} publications from ${zipPublicationData.length} ZIP mappings.`,
   );
+  await seedPublicationRates(prisma);
   if (publicationsWithoutCovers.length > 0) {
     console.warn(`No matching cover images found for: ${publicationsWithoutCovers.join(", ")}.`);
   }
@@ -136,6 +137,59 @@ export async function seedPublications(prisma: PrismaClient) {
       `Skipped publications whose slugs are already assigned to another publication: ${publicationsSkippedForSlugConflict.join(", ")}.`,
     );
   }
+}
+
+type PricingSeed = {
+  affluence: Record<string, number>;
+  defaultAffluence: number;
+  packages: { kind: "AD" | "ARTICLE"; name: string; description: string; basePriceUsd: number }[];
+};
+
+/**
+ * Gives every publication without rates a demo rate card (prisma/seed/publications/pricing.json).
+ * Larger and more affluent audiences pay more: base price × audience factor × affluence index.
+ */
+async function seedPublicationRates(prisma: PrismaClient) {
+  const pricing = JSON.parse(
+    await readFile(resolve(sourceDirectory, "pricing.json"), "utf8"),
+  ) as PricingSeed;
+
+  const publications = await prisma.publication.findMany({
+    where: { promotionPackages: { none: {} } },
+    select: { id: true, name: true },
+  });
+
+  for (const publication of publications) {
+    const { _sum } = await prisma.zipCode.aggregate({
+      where: { publications: { some: { id: publication.id } } },
+      _sum: { estimatedPopulation: true },
+    });
+    const population = _sum.estimatedPopulation ?? 0;
+    const audienceFactor = Math.min(2, Math.max(0.6, (population / 100_000) ** 0.35));
+    const affluence = pricing.affluence[publication.name] ?? pricing.defaultAffluence;
+    const multiplier = audienceFactor * affluence;
+
+    const positions = { AD: 0, ARTICLE: 0 };
+    await prisma.promotionPackage.createMany({
+      data: pricing.packages.map((item) => ({
+        publicationId: publication.id,
+        kind: item.kind,
+        name: item.name,
+        description: item.description,
+        priceCents: roundPrice(item.basePriceUsd * multiplier) * 100,
+        position: positions[item.kind]++,
+      })),
+    });
+    console.info(
+      `Seeded demo rates for ${publication.name}: audience ${population.toLocaleString("en-US")}, affluence ${affluence}, multiplier ${multiplier.toFixed(2)}.`,
+    );
+  }
+}
+
+/** Rounds to a rate-card-looking price: nearest $5 under $500, nearest $25 above. */
+function roundPrice(amount: number) {
+  const step = amount < 500 ? 5 : 25;
+  return Math.max(step, Math.round(amount / step) * step);
 }
 
 function slugify(value: string) {

@@ -3,10 +3,13 @@ import { notFound } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { ArticleEditor } from "@/components/article-editor";
 import { updateArticleStatus } from "@/app/actions/content";
+import { PromotionDealPanel } from "@/components/promotion-deal-panel";
 import { ReviewButton } from "@/components/review-button";
-import { getArticleScope, getPublicationScope } from "@/lib/access";
+import { SubmitReviewButton } from "@/components/submit-review-button";
+import { getArticleScope, listIssueOptions } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getLatestPromotionDeal } from "@/lib/promotion-deals";
 
 export default async function ArticlePage({
   params,
@@ -25,11 +28,10 @@ export default async function ArticlePage({
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         select: { id: true, originalName: true, caption: true, mimeType: true, size: true },
       },
-      publications: {
-        orderBy: { publication: { name: "asc" } },
-        select: { publicationId: true, publication: { select: { name: true } } },
+      issues: {
+        select: { issueId: true, issue: { select: { name: true, publication: { select: { name: true } } } } },
       },
-      business: { select: { id: true, name: true } },
+      business: { select: { id: true, name: true, email: true } },
       placements: {
         include: {
           page: {
@@ -52,21 +54,21 @@ export default async function ArticlePage({
   if (!article) notFound();
 
   const canEdit = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
-  const editorAgent = canEdit
-    ? await prisma.agent.findUnique({ where: { slug: "editor" }, select: { id: true, enabled: true } })
-    : null;
-  const publicationScope = canEdit ? await getPublicationScope(user) : null;
-  const [publications, businesses] = await Promise.all([
-    canEdit && publicationScope
-      ? prisma.publication.findMany({
-          where: publicationScope,
-          orderBy: { name: "asc" },
-          select: { id: true, name: true },
-        })
+  const [editorAgent, marketerAgent, promotionDeal] = canEdit
+    ? await Promise.all([
+        prisma.agent.findUnique({ where: { slug: "editor" }, select: { id: true, enabled: true } }),
+        prisma.agent.findUnique({ where: { slug: "marketer" }, select: { enabled: true } }),
+        getLatestPromotionDeal({ articleId: article.id }),
+      ])
+    : [null, null, null];
+  const reviewOpen = promotionDeal?.agentTask.status === "RUNNING" || promotionDeal?.agentTask.status === "PENDING";
+  const [issues, businesses] = await Promise.all([
+    canEdit
+      ? listIssueOptions(user)
       : Promise.resolve(
-          article.publications.map(({ publicationId, publication }) => ({
-            id: publicationId,
-            name: publication.name,
+          article.issues.map(({ issueId, issue }) => ({
+            id: issueId,
+            name: `${issue.publication.name} · ${issue.name}`,
           })),
         ),
     canEdit
@@ -95,6 +97,12 @@ export default async function ArticlePage({
               apiPath={`/api/articles/${article.id}/review`}
             />
           ) : null}
+          {canEdit && marketerAgent?.enabled ? (
+            <SubmitReviewButton
+              apiPath={`/api/articles/${article.id}/submit-review`}
+              disabled={!article.business?.email || reviewOpen}
+            />
+          ) : null}
           {canEdit ? (
             <form action={updateArticleStatus} className="inline-edit">
               <input name="id" type="hidden" value={article.id} />
@@ -115,16 +123,25 @@ export default async function ArticlePage({
             title: article.title,
             body: article.body,
             status: article.status,
-            publicationIds: article.publications.map(({ publicationId }) => publicationId),
+            issueIds: article.issues.map(({ issueId }) => issueId),
             images: article.images,
             businessId: article.businessId,
           }}
           businesses={businesses}
           canEdit={canEdit}
           canViewImageDetail={canEdit}
-          publications={publications}
+          issues={issues}
         />
       </section>
+      {canEdit ? (
+        <PromotionDealPanel
+          businessEmail={article.business?.email ?? null}
+          businessName={article.business?.name ?? null}
+          deal={promotionDeal}
+          kind="article"
+          showConversationLink={user.role === UserRole.ADMIN}
+        />
+      ) : null}
       <section className="panel article-issues-panel">
         <div className="panel-heading"><h2>Issue placements <span className="count-badge">{issueLinks.length}</span></h2></div>
         {issueLinks.length ? (

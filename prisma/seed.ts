@@ -483,20 +483,12 @@ async function seedAgents() {
       name: "Marketer",
       slug: "marketer",
       description:
-        "Drafts personalised sales pitches for local businesses, inviting them to purchase Sponsored Articles (paid content features) or Advertisements (banner placements) in upcoming issues. Drafts are queued for admin review before any email is sent.",
+        "Business development for the publication. Sends ads and articles to their advertisers for review, sells paid promotion packages for the issue and answers replies by email, and drafts sales pitches for local businesses.",
       enabled: true,
       settings: {
         advertisingUrl: "",
-        sponsoredArticle: {
-          enabled: true,
-          subject: "Feature {businessName} in {publicationName}",
-          body: "Hello,\n\nI'm reaching out from Best Version Media's sales team for {publicationName}.\n\nWe'd love to feature {businessName} as a sponsored article in our next issue — a professionally written community spotlight that puts your business in front of local homeowners and residents who are actively looking to support neighbourhood businesses.\n\nA sponsored article gives you:\n• A full editorial-style feature written by our team\n• Prominent placement in an upcoming issue\n• Distribution to local subscribers and online readers\n• A lasting digital record of your community presence\n\nWe'd be happy to walk you through the details and answer any questions. Simply reply to this email or visit our advertising page:\n\n{advertisingUrl}\n\nWarm regards,\n{agentName}\nBest Version Media",
-        },
-        advertisement: {
-          enabled: true,
-          subject: "Advertise {businessName} in {publicationName}",
-          body: "Hello,\n\nI'm reaching out from Best Version Media's sales team for {publicationName}.\n\nWe have advertising placement opportunities available in our next issue — a great way to get {businessName} in front of local homeowners and residents in your area.\n\nOur banner ads are professionally designed, high-impact placements that appear alongside curated community content. Readers trust our publication and actively engage with local business features.\n\nInterested in learning more? Reply to this email or submit your ad inquiry here:\n\n{advertisingUrl}\n\nWarm regards,\n{agentName}\nBest Version Media",
-        },
+        sponsoredArticle: { enabled: true },
+        advertisement: { enabled: true },
       },
     },
   });
