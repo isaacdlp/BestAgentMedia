@@ -203,7 +203,6 @@ export async function POST(
           originalName: enhancedOriginalName,
           mimeType: result.enhancedMimeType,
           size: enhancedBuffer.byteLength,
-          caption: "",
           position: (maxPos._max.position ?? -1) + 1,
         },
       });

@@ -21,6 +21,9 @@ export type ContentItem = {
   type: ContentSourceType;
   description: string;
   imageUrl?: string;
+  // Every picture of an article, in its saved order (imageUrl is the first). Templates with
+  // several photo slots fill them in this order.
+  imageUrls?: string[];
 };
 
 const RECORD_ID_PATTERN = /^[\w-]{1,64}$/;
@@ -40,7 +43,7 @@ export function absoluteUrl(src: string) {
   return src.startsWith("/") && !src.startsWith("//") ? `${window.location.origin}${src}` : src;
 }
 
-function parseHexColor(value: unknown): RGBAColor | null {
+export function parseHexColor(value: unknown): RGBAColor | null {
   if (typeof value !== "string") return null;
   const match = value.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
   if (!match) return null;
@@ -53,7 +56,7 @@ function numberOr(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function readMetadata(engine: CreativeEngine, block: DesignBlockId, key: string) {
+export function readMetadata(engine: CreativeEngine, block: DesignBlockId, key: string) {
   return engine.block.hasMetadata(block, key) ? engine.block.getMetadata(block, key) : "";
 }
 
@@ -67,7 +70,7 @@ export async function loadDefaultTypeface(engine: CreativeEngine): Promise<Typef
   }
 }
 
-type ContentLink = { sourceType: ContentSourceType; sourceId: string; title?: string };
+export type ContentLink = { sourceType: ContentSourceType; sourceId: string; title?: string };
 
 function readContentLink(custom: unknown): ContentLink | null {
   if (typeof custom !== "object" || custom === null) return null;
@@ -78,7 +81,7 @@ function readContentLink(custom: unknown): ContentLink | null {
   return { sourceType, sourceId, title: typeof title === "string" ? title : undefined };
 }
 
-function applyContentLink(engine: CreativeEngine, block: DesignBlockId, elementId: string, link: ContentLink | null) {
+export function applyContentLink(engine: CreativeEngine, block: DesignBlockId, elementId: string, link: ContentLink | null) {
   engine.block.setMetadata(block, METADATA_KEYS.elementId, elementId);
   if (!link) return;
   engine.block.setMetadata(block, METADATA_KEYS.sourceType, link.sourceType);
@@ -126,7 +129,7 @@ function createTextBlock(engine: CreativeEngine, page: DesignBlockId, options: T
 
 type ImageOptions = { src: string; x: number; y: number; width: number; height: number };
 
-function createImageBlock(engine: CreativeEngine, page: DesignBlockId, options: ImageOptions) {
+export function createImageBlock(engine: CreativeEngine, page: DesignBlockId, options: ImageOptions) {
   const block = engine.block.create("graphic");
   engine.block.setShape(block, engine.block.createShape("rect"));
   const fill = engine.block.createFill("image");
@@ -177,7 +180,7 @@ function createLayoutElement(engine: CreativeEngine, page: DesignBlockId, elemen
   }, typeface);
 }
 
-function setPageMetadata(engine: CreativeEngine, page: DesignBlockId, id: string, type: IssuePageType) {
+export function setPageMetadata(engine: CreativeEngine, page: DesignBlockId, id: string, type: IssuePageType) {
   engine.block.setMetadata(page, METADATA_KEYS.issuePageId, id);
   engine.block.setMetadata(page, METADATA_KEYS.pageType, type);
   // The cover and back cover are fixed issue pages; only inner pages may be deleted.

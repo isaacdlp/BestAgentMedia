@@ -1,12 +1,13 @@
 import { copyFile, mkdir, stat as fsStat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { PrismaClient, SubmissionStatus, UserRole } from "@prisma/client";
+import { ArticleStatus, PrismaClient, SubmissionStatus, UserRole } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { z } from "zod";
 import { seedHereCategories } from "./here-category-seed";
 import { seedPublications } from "./publication-seed";
 import { seedZipCodeBoundaries } from "./zip-code-boundary-seed";
 import submissionFixtures from "./seed/submissions/submissions.json";
+import articleFixtures from "./seed/articles/articles.json";
 
 const prisma = new PrismaClient();
 
@@ -49,6 +50,7 @@ async function main() {
   await seedPublications(prisma);
   await seedEditors(passwordHash);
   await seedSubmissions(passwordHash);
+  await seedArticles(admin.id);
   await seedHereCategories(prisma);
   await seedAgents();
 }
@@ -85,7 +87,7 @@ const demoSubmissions = z
 const submissionSeedDirectory = resolve(process.cwd(), "prisma", "seed", "submissions");
 const submissionMediaDirectory = resolve(process.cwd(), "media", "submissions");
 
-/** Creates sample contributors and their story submissions (with images) on Lexington Living. */
+/** Creates sample contributors and their story submissions (with images) on MetroWest Living. */
 async function seedSubmissions(passwordHash: string) {
   const contributors: { id: string; name: string; surname: string; email: string }[] = [];
   for (const contributor of demoContributors) {
@@ -100,11 +102,11 @@ async function seedSubmissions(passwordHash: string) {
   }
 
   const publication = await prisma.publication.findUnique({
-    where: { name: "Lexington Living" },
+    where: { name: "MetroWest Living" },
     select: { id: true, name: true, zipCodes: { orderBy: { code: "asc" }, take: 1, select: { code: true } } },
   });
   if (!publication) {
-    throw new Error("Lexington Living is missing from the seeded publications.");
+    throw new Error("MetroWest Living is missing from the seeded publications.");
   }
   const postalCode = publication.zipCodes[0]?.code ?? null;
 
@@ -149,6 +151,62 @@ async function seedSubmissions(passwordHash: string) {
   console.info(
     `Seeded ${contributors.length} contributors and ${demoSubmissions.length} submissions for ${publication.name}.`,
   );
+}
+
+const demoArticles = z
+  .array(
+    z.object({
+      id: z.string().min(1),
+      sourceSubmissionId: z.string().min(1),
+      title: z.string().min(1),
+      body: z.string().min(1),
+      status: z.nativeEnum(ArticleStatus),
+      images: z.array(
+        z.object({
+          fileName: z.string().regex(/^[a-z0-9-]+.(?:png|jpe?g|webp)$/i),
+          originalName: z.string().min(1).max(255),
+          mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+        }),
+      ),
+    }),
+  )
+  .parse(articleFixtures);
+
+const articleSeedDirectory = resolve(process.cwd(), "prisma", "seed", "articles");
+const articleMediaDirectory = resolve(process.cwd(), "media", "articles");
+
+/** Creates the sample articles (with images) that were written from the seeded submissions. */
+async function seedArticles(authorId: string) {
+  await mkdir(articleMediaDirectory, { recursive: true });
+  for (const article of demoArticles) {
+    const data = {
+      title: article.title,
+      body: article.body,
+      status: article.status,
+      sourceSubmissionId: article.sourceSubmissionId,
+      createdByUserId: authorId,
+    };
+    // Keyed by the source submission so an article already written from it is updated, not duplicated.
+    const { id: articleId } = await prisma.article.upsert({
+      where: { sourceSubmissionId: article.sourceSubmissionId },
+      update: data,
+      create: { id: article.id, ...data },
+      select: { id: true },
+    });
+
+    for (const [position, image] of article.images.entries()) {
+      const destinationPath = resolve(articleMediaDirectory, image.fileName);
+      await copyFile(resolve(articleSeedDirectory, image.fileName), destinationPath);
+      const { size } = await fsStat(destinationPath);
+      const imageData = { originalName: image.originalName, mimeType: image.mimeType, size, position, articleId };
+      await prisma.articleImage.upsert({
+        where: { fileName: image.fileName },
+        update: imageData,
+        create: { fileName: image.fileName, ...imageData },
+      });
+    }
+  }
+  console.info(`Seeded ${demoArticles.length} articles.`);
 }
 
 const userSeedDirectory =resolve(process.cwd(), "prisma", "seed", "users");
@@ -390,11 +448,12 @@ async function seedAgents() {
       slug: "designer",
       personaName: "Thomas Brown",
       description:
-        "Automatically generates issue layouts using AI. Analyzes the publication's cover style and distributes articles and advertisements across pages to produce a ready-to-review design.",
+        "Composes complete issue layouts with Claude: front cover, as many inner pages as the content needs and back cover, using every article and ad assigned to the issue, on editable page templates ready for review.",
       enabled: true,
       settings: {
-        model: "claude-opus-4-8",
-        maxOutputTokens: 12000,
+        layoutModel: "claude-opus-5-5",
+        layoutEffort: "high",
+        layoutMaxOutputTokens: 128000,
       },
     },
   });
@@ -406,19 +465,18 @@ async function seedAgents() {
       name: "Assistant",
       slug: "assistant",
       description:
-        "Drafts invitation emails for new story submitters and newly discovered businesses, inviting them to register and claim their submissions or listings. Drafts are queued for admin review before any email is sent.",
+        "Writes personal emails with Claude: invitations for new story submitters (queued as drafts for review), onboarding emails and reminders to newly listed businesses, and information requests to submitters, which it sends and follows through until the requested details arrive.",
       enabled: true,
       settings: {
         registrationUrl: "",
         submissionInvite: {
           enabled: true,
-          subject: "Thank you for your submission — join the community",
-          body: "Hi {submitterName},\n\nThank you for submitting your story \"{submissionTitle}\" to {publicationName}.\n\nCreate an account to track your submission status, receive updates from the editorial team, and stay connected with your community.\n\n{registrationUrl}\n\nBest regards,\nBest Version Media",
+          // Invites are written by Claude from the submission and the sender's earlier submissions.
+          instructions: "",
         },
-        businessInvite: {
-          enabled: true,
-          subject: "Claim your listing in {publicationName}",
-          body: "Hello,\n\nYour business {businessName} has been featured in {publicationName}'s business directory.\n\nCreate an account to claim your listing, keep your information up to date, and connect with your local community.\n\n{registrationUrl}\n\nBest regards,\nBest Version Media",
+        onboarding: {
+          // Business onboarding emails and reminders are written by Claude from the business details.
+          instructions: "",
         },
       },
     },
@@ -432,11 +490,12 @@ async function seedAgents() {
       slug: "editor",
       personaName: "Lisa Lane",
       description:
-        "Reviews content submissions and articles for editorial quality. Suggests headline improvements, structural changes, and clarity fixes so the publication team can refine copy before acceptance.",
+        "Reviews content submissions and articles for editorial quality, suggesting headline improvements, structural changes, and clarity fixes, and applies a review on request by revising the submission with the feedback and any details the submitter sent.",
       enabled: true,
       settings: {
-        model: "claude-sonnet-4-5",
-        maxOutputTokens: 4000,
+        model: "claude-sonnet-5-5",
+        // Claude calls are streamed; thinking counts toward this ceiling and only generated tokens are billed
+        maxOutputTokens: 64000,
       },
     },
   });

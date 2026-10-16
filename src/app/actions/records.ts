@@ -1,5 +1,6 @@
 "use server";
 
+import { stopTasksForSubject } from "@/lib/task-subjects";
 import { AdvertisementStatus, SubmissionStatus, UserRole } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -34,8 +35,10 @@ export async function updateSubmissionStatus(formData: FormData) {
   if (result.count !== 1) {
     throw new Error("Submission not found or not accessible.");
   }
+  if (status === "ACCEPTED") await stopTasksForSubject("submission", id);
 
   revalidatePath("/submissions");
+  revalidatePath(`/submissions/${id}`);
   revalidatePath("/dashboard");
 }
 
@@ -63,6 +66,7 @@ export async function updateAdvertisementStatus(formData: FormData) {
   }
 
   await prisma.advertisement.update({ where: { id: ad.id }, data: { status } });
+  if (status === "APPROVED") await stopTasksForSubject("ad", ad.id);
 
   revalidatePath("/ads");
   revalidatePath("/dashboard");

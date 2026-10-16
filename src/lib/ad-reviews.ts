@@ -104,6 +104,9 @@ export async function recordAdReview(
     (ad.status === AdvertisementStatus.DRAFT || ad.status === AdvertisementStatus.IN_REVIEW)
   ) {
     statusChange = AdvertisementStatus.APPROVED;
+  } else if (input.decision === AdReviewDecision.CHANGES_REQUESTED && ad.status === AdvertisementStatus.DRAFT) {
+    // The first review of a draft moves it into review
+    statusChange = AdvertisementStatus.IN_REVIEW;
   } else if (input.decision === AdReviewDecision.CHANGES_REQUESTED && ad.status === AdvertisementStatus.APPROVED) {
     statusChange = AdvertisementStatus.IN_REVIEW;
   }

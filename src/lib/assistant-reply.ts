@@ -1,11 +1,14 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { MessageDirection } from "@prisma/client";
+import { z } from "zod";
+import { effortFor, MAX_OUTPUT_TOKENS } from "@/lib/claude-request";
 
 const REPLY_MODEL = "claude-sonnet-5-5";
 
 /** What the Assistant should know about Best Version Media when talking to a business owner or resident. */
-const COMPANY_BRIEF = `About Best Version Media (BVM):
+export const COMPANY_BRIEF = `About Best Version Media (BVM):
 - BVM publishes hyper-local community magazines. Each publication serves one specific neighborhood or ZIP code and is delivered free to the residents who live there.
 - The content is about the community itself: neighbors' milestones, local events, school and sports news, resident profiles, and spotlights on the local businesses people already use. Residents can submit their own stories.
 - The magazines are funded by local business partners who advertise or sponsor features. That is what keeps them free for readers.
@@ -35,21 +38,10 @@ const STYLE_GUIDE = `How to write:
 - Stay on topic: BVM, their publication, their listing, advertising, and community stories. If they bring up something unrelated, respond kindly in a sentence and steer back.
 - Plain text only. No subject line, no headers, no markdown. End with a short sign-off and your first name; your full email signature is added automatically.`;
 
-const REPLY_TOOL: Anthropic.Tool = {
-  name: "send_reply",
-  description: "Provide the email reply to send to the other person.",
-  input_schema: {
-    type: "object",
-    properties: {
-      reply: { type: "string", description: "The plain-text body of the email reply." },
-      opted_out: {
-        type: "boolean",
-        description: "True when the person declined or asked not to be contacted again.",
-      },
-    },
-    required: ["reply", "opted_out"],
-  },
-};
+const ReplySchema = z.object({
+  reply: z.string().describe("The plain-text body of the email reply."),
+  opted_out: z.boolean().describe("True when the person declined or asked not to be contacted again."),
+});
 
 export type ThreadMessage = {
   direction: MessageDirection;
@@ -59,17 +51,57 @@ export type ThreadMessage = {
   createdAt: Date;
 };
 
-/** Removes quoted earlier messages ("On ... wrote:" and "> " lines) that mail clients append to replies. */
-function stripQuotedText(body: string): string {
-  const lines = body.split(/\r?\n/);
-  const out: string[] = [];
-  for (const line of lines) {
-    if (/^On .+wrote:\s*$/.test(line.trim()) || /^-{2,}\s*Original Message\s*-{2,}/i.test(line.trim())) break;
-    if (line.startsWith(">")) continue;
-    out.push(line);
+/** Where a quote header ("On <date> <name> wrote:", possibly wrapped over up to 3 lines) ends, or -1. */
+function quoteHeaderEnd(lines: string[], from: number): number {
+  if (!/^On\b/.test(lines[from].trim())) return -1;
+  for (let end = from; end < Math.min(lines.length, from + 3); end++) {
+    const text = lines.slice(from, end + 1).map((line) => line.trim()).join(" ");
+    if (/\bwrote:\s*$/.test(text)) return end;
   }
-  return out.join("\n").trim() || body.trim();
+  return -1;
 }
+
+/**
+ * Removes the quoted earlier message ("On ... wrote:" and "> " lines) that mail clients append to
+ * replies. When the person answered inline (their text interleaved with the quoted lines), the
+ * single-level quoted lines are kept so each answer stays next to the question it responds to;
+ * deeper quotes (">>", older messages) are dropped.
+ */
+export function stripQuotedText(body: string): string {
+  const lines = body.split(/\r?\n/);
+  let quoteStart = lines.length;
+  let restStart = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^-{2,}\s*Original Message\s*-{2,}/i.test(lines[i].trim())) {
+      // Outlook-style quotes have no ">" markers, so inline answers cannot be told apart
+      quoteStart = i;
+      break;
+    }
+    const headerEnd = quoteHeaderEnd(lines, i);
+    if (headerEnd >= 0 || lines[i].startsWith(">")) {
+      quoteStart = i;
+      restStart = headerEnd >= 0 ? headerEnd + 1 : i;
+      break;
+    }
+  }
+
+  const own = lines.slice(0, quoteStart).join("\n").trim();
+  const rest = lines.slice(restStart);
+  const firstQuote = rest.findIndex((line) => line.startsWith(">"));
+  const answeredInline = firstQuote >= 0 && rest.slice(firstQuote).some((line) => !line.startsWith(">") && line.trim() !== "");
+  if (!answeredInline) return own || body.trim();
+
+  const inline = rest
+    .filter((line) => !/^>\s*>/.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return [own, inline].filter(Boolean).join("\n\n");
+}
+
+/** Tells the model how inline answers appear in a transcript rendered by renderTranscript. */
+export const INLINE_REPLY_NOTE =
+  'Lines starting with ">" quote an earlier email; text between those lines is the sender\'s inline answer to the quoted line(s) just above it. Treat inline answers as part of their message.';
 
 export function renderTranscript(messages: ThreadMessage[], agentName: string, otherName: string): string {
   return messages
@@ -115,30 +147,29 @@ export async function generateAssistantReply(opts: {
   const transcript = renderTranscript(opts.messages, opts.agent.name, otherName);
 
   const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
-    model: REPLY_MODEL,
-    max_tokens: 1500,
-    system,
-    // Forced tool_choice ("tool"/"any") is rejected by this model, so let it choose and
-    // instruct it to answer through the tool; plain text is accepted as a fallback.
-    tools: [REPLY_TOOL],
-    tool_choice: { type: "auto" },
-    messages: [
-      {
-        role: "user",
-        content: `Here is the email conversation so far, oldest first:\n\n${transcript}\n\nWrite your reply to the most recent message from ${otherName} and deliver it by calling the ${REPLY_TOOL.name} tool.`,
-      },
-    ],
-  });
+  // Structured output guarantees a schema-valid reply (forced tool use is rejected by current
+  // models, and a plain-text fallback could send a reply cut off at max_tokens).
+  const response = await client.messages
+    .stream({
+      model: REPLY_MODEL,
+      max_tokens: MAX_OUTPUT_TOKENS,
+      system,
+      // A conversational email reply needs little deliberation
+      output_config: { format: zodOutputFormat(ReplySchema), ...effortFor(REPLY_MODEL, "low") },
+      messages: [
+        {
+          role: "user",
+          content: `Here is the email conversation so far, oldest first:\n\n${transcript}\n\n${INLINE_REPLY_NOTE}\n\nWrite your reply to the most recent message from ${otherName}.`,
+        },
+      ],
+    })
+    .finalMessage();
 
-  const toolUse = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-  const input = toolUse?.input as { reply?: unknown; opted_out?: unknown } | undefined;
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
-  const reply = typeof input?.reply === "string" ? input.reply.trim() : text;
-  if (!reply) return null;
-  return { reply, optedOut: input?.opted_out === true };
+  const output = response.parsed_output;
+  const reply = output?.reply.trim() ?? "";
+  if (!reply) {
+    console.warn(`[AssistantReply] No usable reply (stop reason: ${response.stop_reason}).`);
+    return null;
+  }
+  return { reply, optedOut: output?.opted_out === true };
 }

@@ -4,9 +4,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { MessageDirection } from "@prisma/client";
 import type { ImapFlow, FetchMessageObject } from "imapflow";
-import { getSubAgentConfig } from "@/lib/sub-agent-email";
+import { getSubAgentConfig, isSignaturePicture } from "@/lib/sub-agent-email";
 import { handleReachoutInboundMessage, checkReachoutReminders } from "@/lib/reachout-tasks";
-import { handleClarificationReply } from "@/lib/clarification-reply";
+import { checkClarificationFollowUps, handleClarificationReply } from "@/lib/clarification-reply";
 import { handleGenericInboundMessage } from "@/lib/sub-agent-reply";
 import { checkPromotionFollowUps, handlePromotionInboundMessage } from "@/lib/promotion-deals";
 import { checkPromotionSaleFollowUps, handlePromotionSaleInboundMessage } from "@/lib/promotion-sales";
@@ -156,6 +156,8 @@ export async function pollSubAgentInbox(subAgentId: number): Promise<PollerResul
             try {
               await mkdir(emailAttachmentDirectory, { recursive: true });
               for (const att of imageAttachments) {
+                // Our own signature picture quoted back by the person's mail client is not their photo
+                if (await isSignaturePicture(att.content as Buffer, { cid: att.cid, fileName: att.filename })) continue;
                 const ext = att.contentType === "image/jpeg" ? "jpg"
                   : att.contentType === "image/png" ? "png"
                   : "webp";
@@ -190,7 +192,7 @@ export async function pollSubAgentInbox(subAgentId: number): Promise<PollerResul
 
           // Reachout-specific reply (Claude, with the claim link as context; RUNNING tasks only)
           void handleReachoutInboundMessage(threadId);
-          // Incorporate reply into submission for clarification threads
+          // Record the information in replies on clarification threads (the submission text is left to the Copywriter)
           void handleClarificationReply(threadId);
           // Marketer reply and deal tracking for ads/articles submitted for advertiser review
           void handlePromotionInboundMessage(threadId);
@@ -210,6 +212,7 @@ export async function pollSubAgentInbox(subAgentId: number): Promise<PollerResul
   }
 
   void checkReachoutReminders();
+  void checkClarificationFollowUps();
   void checkPromotionFollowUps().catch((err) => console.error("[PromotionDeal] follow-up check failed:", err));
   void checkPromotionSaleFollowUps().catch((err) => console.error("[PromotionSale] follow-up check failed:", err));
 

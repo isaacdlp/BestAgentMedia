@@ -110,9 +110,8 @@ export default async function SubmissionsPage({
                         <form action={updateSubmissionStatus} className="inline-edit">
                           <input name="id" type="hidden" value={submission.id} />
                           <select aria-label={`Update ${submission.title} status`} defaultValue={submission.status} name="status">
-                            <option value="NEW">New</option>
+                            <option value="DRAFT">Draft</option>
                             <option value="IN_REVIEW">In review</option>
-                            <option value="NEEDS_INFORMATION">Needs information</option>
                             <option value="ACCEPTED">Accepted</option>
                             <option value="DECLINED">Declined</option>
                           </select>

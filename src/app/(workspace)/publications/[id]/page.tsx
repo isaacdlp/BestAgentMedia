@@ -141,12 +141,20 @@ export default async function PublicationDetailPage({
                 imageUrl={coverImageUrl}
               />
             )}
-            <Link
-              className="button button-secondary"
-              href={`/issues?publicationId=${publication.id}`}
-            >
-              Issues
-            </Link>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <Link
+                className="button button-secondary"
+                href={`/issues?publicationId=${publication.id}`}
+              >
+                Issues
+              </Link>
+              <Link
+                className="button button-secondary"
+                href={`/businesses?publicationId=${publication.id}`}
+              >
+                Businesses
+              </Link>
+            </div>
           </div>
           {canEdit ? (
             <>

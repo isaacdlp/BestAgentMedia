@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { EmailThreadList } from "@/components/email-thread-view";
 import { ImageDropzone } from "@/components/image-dropzone";
 
@@ -78,6 +78,7 @@ function ConfigField({
 
 export default function SubAgentDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const agentId = Number(params.id);
   const subAgentId = Number(params.subId);
 
@@ -379,7 +380,7 @@ export default function SubAgentDetailPage() {
         <div className="panel-heading">
           <h2>Email Conversations</h2>
         </div>
-        <EmailThreadList subAgentId={subAgentId} />
+        <EmailThreadList initialThreadId={searchParams.get("thread")} subAgentId={subAgentId} />
       </section>
     </>
   );

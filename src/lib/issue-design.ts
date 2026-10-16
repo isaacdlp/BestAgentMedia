@@ -1,14 +1,16 @@
 // Shared issue-design definitions used by the CreativeEditor (CE.SDK) canvas,
 // the design persistence endpoint, and the AI layout generator.
 //
-// Issue.designJson holds one of two shapes:
+// Issue.designJson holds one of three shapes:
 // - A CE.SDK document ({ format: "cesdk", scene, pages }) saved by the editor. `scene` is the
 //   opaque string from `engine.scene.saveToString()`; `pages` is a manifest of page identity
 //   and linked content derived from block metadata, so the server can validate placements
 //   without decoding the scene.
 // - A layout specification ({ width, height, pages: [{ id, background, children }] }) with
-//   simple text/image elements. AI-generated layouts and designs saved before the CE.SDK
+//   simple text/image elements. Older Designer layouts and designs saved before the CE.SDK
 //   migration use this shape; the editor converts it into a CE.SDK scene when it is opened.
+// - A composition ({ format: "composition", pages }) from the Designer's automatic layout
+//   (src/lib/issue-composition.ts); the editor builds it into template pages when it is opened.
 
 export const CESDK_DESIGN_FORMAT = "cesdk";
 export const DEFAULT_PAGE_WIDTH = 816;
@@ -22,6 +24,9 @@ export const METADATA_KEYS = {
   sourceType: "bestAgentMedia/sourceType",
   sourceId: "bestAgentMedia/sourceId",
   title: "bestAgentMedia/title",
+  // Page template (src/lib/issue-templates.ts): the page's template ID and each template block's slot ID.
+  templateId: "bestAgentMedia/templateId",
+  templateSlot: "bestAgentMedia/templateSlot",
 } as const;
 
 export type IssuePageType = "COVER" | "INNER" | "BACK_COVER";

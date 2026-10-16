@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { renderTranscript, type ThreadMessage } from "@/lib/assistant-reply";
+import { INLINE_REPLY_NOTE, renderTranscript, type ThreadMessage } from "@/lib/assistant-reply";
+import { MAX_OUTPUT_TOKENS } from "@/lib/claude-request";
 import { formatCents, type PromotionPackageOffer } from "@/lib/promotion-packages";
 
 /** Placeholder the model puts where the exact ad/article preview is inserted into the first email. */
@@ -57,6 +58,29 @@ const AD_DECISION_GUIDE = `How to fill the tool fields:
 - content_feedback: "approved" only when they clearly approve the ad creative as it is (for example "looks great", "approved", "go ahead"); "changes_requested" when they ask for any change to the artwork, copy, images, offer or contact details; otherwise "none" (questions, small talk, thanks).
 - requested_changes: the specific changes they asked for in this message, as a short list, or "" when there are none.
 - deal_decision: always "none", except "declined" when they say they want to cancel the ad entirely.
+- package_key: always "".
+- opted_out: true only when they ask not to be contacted again.`;
+
+// A sponsored article the business already paid for (bought in a Promote sale, signed up in an
+// earlier review, or priced by staff): like an ad, the Marketer gets the copy approved, not a sale.
+const PAID_ARTICLE_SALES_GUIDE = `Your job:
+- You are the account representative for this business at the publication. The sale is DONE: the business has already agreed to run this article as a sponsored feature in the issue. Never sell, upsell, quote prices, mention packages or rates, or reopen what was agreed. If they ask about price, placement or invoicing, say you will check with the publication team and get back to them.
+- Your one goal in this conversation: get their approval of the article, or a clear list of the changes they want, and keep going until it is approved. Make them feel looked after, so they are glad to work with the publication again.
+- When they ask for changes, confirm back exactly what you understood and say the team will send a revised version. When they approve, thank them sincerely and confirm the feature is set for the issue. Never pressure and never push a new purchase.
+- Never invent deadlines, discounts, circulation, readership or results.
+
+How to write:
+- Write like a real person on the local team: warm, plain words, short paragraphs, no marketing buzzwords and no bullet lists except when listing changes.
+- Answer what they actually said first. Match their tone and length.
+- Use their first name if you know it. Use contractions.
+- If they are annoyed, want to cancel, or ask not to be contacted, be gracious, confirm you will pass it to the team, and set opted_out to true only when they ask not to be contacted again.
+- If they sincerely ask whether they are talking to a person or an automated assistant, answer honestly.
+- Plain text only, no markdown, no subject line inside the body. End with a short sign-off and your first name; your full email signature is added automatically.`;
+
+const PAID_ARTICLE_DECISION_GUIDE = `How to fill the tool fields:
+- content_feedback: "approved" only when they clearly approve the article as it is; "changes_requested" when they ask for any change to the copy, photos, offer or contact details; otherwise "none".
+- requested_changes: the specific changes they asked for in this message, as a short list, or "" when there are none.
+- deal_decision: always "none", except "declined" when they say they want to cancel the sponsored feature entirely.
 - package_key: always "".
 - opted_out: true only when they ask not to be contacted again.`;
 
@@ -139,7 +163,7 @@ function describePackages(packages: PromotionPackageOffer[]): string {
 
 /** The task for each Marketer step on an article: get it approved and sell a promotion package. */
 function articleInstruction(mode: MarketerMode, recipient: string, transcript: string, event?: string): string {
-  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}`;
+  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}\n\n${INLINE_REPLY_NOTE}`;
   switch (mode) {
     case "initial":
       return `Write the first email to ${recipient}. Introduce yourself briefly, explain that their content for the upcoming issue is ready for their review, and put the exact line ${CONTENT_PLACEHOLDER} on its own line where the content preview should appear (it is inserted automatically, so do not repeat the content yourself). Ask them to reply with their approval or any changes. Then pitch the promotion packages that fit them, recommend one, and make signing up a one-line reply. Keep it under 280 words excluding the preview. Give it a specific, friendly subject line. Set content_feedback, deal_decision to "none", requested_changes and package_key to "", and opted_out to false.`;
@@ -156,7 +180,7 @@ const PITCH_FIELDS_NONE =`Set requested_changes and package_key to "", content_f
 
 /** The task for each Marketer step when prospecting a business that has bought nothing yet. */
 function pitchInstruction(mode: MarketerMode, recipient: string, transcript: string): string {
-  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}`;
+  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}\n\n${INLINE_REPLY_NOTE}`;
   switch (mode) {
     case "initial":
       return `Write the first email to ${recipient}. Introduce yourself briefly as part of the local publication team, say in a sentence or two why you are writing to them specifically (based on what they do and where they are), and explain the opportunity described in the pitch focus. Mention the package or two that fit them best with their prices, and ask one easy question that invites a reply (for example whether they would like to hear more or have a feature idea). Keep it under 220 words. Give it a specific, friendly subject line that is not salesy. ${PITCH_FIELDS_NONE}`;
@@ -171,7 +195,7 @@ const AD_FIELDS_NONE = `Set requested_changes and package_key to "", content_fee
 
 /** The task for each Marketer step on an ad whose sale is already agreed. */
 function adInstruction(mode: MarketerMode, recipient: string, transcript: string, event?: string): string {
-  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}`;
+  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}\n\n${INLINE_REPLY_NOTE}`;
   switch (mode) {
     case "initial":
       return `Write the first email to ${recipient}. Introduce yourself briefly as their contact at the publication, thank them for advertising with the publication, and say their ad for the upcoming issue is ready for their approval. Put the exact line ${CONTENT_PLACEHOLDER} on its own line where the ad preview and review link should appear (it is inserted automatically, so do not repeat the ad content or the link yourself). Ask them to approve it on the review page or by replying, or to tell you what to change. Do not sell anything and do not mention prices or packages. Keep it under 200 words excluding the preview. Give it a specific, friendly subject line. ${AD_FIELDS_NONE}`;
@@ -181,6 +205,19 @@ function adInstruction(mode: MarketerMode, recipient: string, transcript: string
       return `${thread}\n\n${recipient} just submitted this review on the online review page (not by email):\n${event ?? ""}\n\nWrite a short email on the same thread (3 to 7 sentences) acknowledging it. If they approved, thank them warmly, confirm the ad is approved and set for the issue, and say you are glad to help with future issues. If they asked for changes, list back the changes you understood, say the team is preparing a revised version, and promise to send it as soon as it is ready. Do not mention prices or packages. Set subject to "". ${AD_FIELDS_NONE}`;
     case "revised":
       return `${thread}\n\nThe team has prepared a revised version of ${recipient}'s ad after their feedback. The changes they asked for were:\n${event || "(none recorded)"}\n\nWrite a short email on the same thread (4 to 8 sentences): the revised ad is ready, the team revised it with their feedback in mind (do not claim a specific change was made beyond what they asked for, and do not describe the artwork in detail), then put the exact line ${CONTENT_PLACEHOLDER} on its own line where the ad preview and review link should appear (inserted automatically). Ask them to approve it on the review page or by replying, or to tell you anything else to change. Do not mention prices or packages. Set subject to "". ${AD_FIELDS_NONE}`;
+    default:
+      return `${thread}\n\nWrite your reply to the most recent message from ${recipient}, and classify that message in the tool fields. Set subject to "".`;
+  }
+}
+
+/** The task for each Marketer step on a sponsored article whose sale is already agreed. */
+function paidArticleInstruction(mode: MarketerMode, recipient: string, transcript: string): string {
+  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}\n\n${INLINE_REPLY_NOTE}`;
+  switch (mode) {
+    case "initial":
+      return `Write the first email to ${recipient}. Introduce yourself briefly as their contact at the publication, thank them for their sponsored feature, and say the article for the upcoming issue is ready for their approval. Put the exact line ${CONTENT_PLACEHOLDER} on its own line where the article preview should appear (it is inserted automatically, so do not repeat the content yourself). Ask them to reply with their approval or any changes. Do not sell anything and do not mention prices or packages. Keep it under 200 words excluding the preview. Give it a specific, friendly subject line. ${AD_FIELDS_NONE}`;
+    case "follow_up":
+      return `${thread}\n\n${recipient} has not replied. Write a short, friendly follow-up (3 to 5 sentences) on the same thread: their sponsored article is ready and waiting for their approval, and a one-line reply is enough. Offer to answer questions or make changes. Do not mention prices or packages. Set subject to "". ${AD_FIELDS_NONE}`;
     default:
       return `${thread}\n\nWrite your reply to the most recent message from ${recipient}, and classify that message in the tool fields. Set subject to "".`;
   }
@@ -207,12 +244,13 @@ export async function generateMarketerMessage(opts: {
   /** review_received / revised only: what the advertiser submitted, or the changes being addressed. */
   event?: string;
   /**
-   * "ad": the sale is agreed and the goal is approval; "article" (default): review and sell a package;
-   * "pitch": prospecting a business that has not bought anything yet.
+   * "ad" / "paid_article": the sale is agreed and the goal is approval; "article" (default): review
+   * and sell a package; "pitch": prospecting a business that has not bought anything yet.
    */
-  kind?: "ad" | "article" | "pitch";
+  kind?: "ad" | "article" | "paid_article" | "pitch";
 }): Promise<MarketerMessage | null> {
   const isAd = opts.kind === "ad";
+  const isPaidArticle = opts.kind === "paid_article";
   const isPitch = opts.kind === "pitch";
   const apiKey = process.env.CLAUDE_KEY;
   if (!apiKey) {
@@ -225,14 +263,14 @@ export async function generateMarketerMessage(opts: {
     `You are ${opts.agent.name}, a sales and partnership representative on the local publication team at Best Version Media, writing by email.`,
     opts.agent.soul ? `Your persona: ${opts.agent.soul}` : "",
     COMPANY_BRIEF,
-    isAd
+    isAd || isPaidArticle
       ? ""
       : `Promotion packages on this publication's rate card (the only prices you may quote; rates reflect the size and profile of its readership):\n${describePackages(opts.packages)}`,
     opts.context.length
       ? `About this ${isPitch ? "business" : "advertiser and their content"}:\n${opts.context.map((line) => `- ${line}`).join("\n")}`
       : "",
-    isAd ? AD_SALES_GUIDE : isPitch ? PITCH_GUIDE : SALES_GUIDE,
-    isAd ? AD_DECISION_GUIDE : isPitch ? PITCH_DECISION_GUIDE : DECISION_GUIDE,
+    isAd ? AD_SALES_GUIDE : isPaidArticle ? PAID_ARTICLE_SALES_GUIDE : isPitch ? PITCH_GUIDE : SALES_GUIDE,
+    isAd ? AD_DECISION_GUIDE : isPaidArticle ? PAID_ARTICLE_DECISION_GUIDE : isPitch ? PITCH_DECISION_GUIDE : DECISION_GUIDE,
     `Sign off as ${firstName}.`,
   ]
     .filter(Boolean)
@@ -241,20 +279,22 @@ export async function generateMarketerMessage(opts: {
   const transcript = opts.messages.length ? renderTranscript(opts.messages, opts.agent.name, opts.recipientName) : "";
   const instruction = isAd
     ? adInstruction(opts.mode, opts.recipientName, transcript, opts.event)
-    : isPitch
+    : isPaidArticle
+      ? paidArticleInstruction(opts.mode, opts.recipientName, transcript)
+      : isPitch
       ? pitchInstruction(opts.mode, opts.recipientName, transcript)
       : articleInstruction(opts.mode, opts.recipientName, transcript, opts.event);
 
   const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
+  const response = await client.messages.stream({
     model: opts.model,
-    max_tokens: 16000,
+    max_tokens: MAX_OUTPUT_TOKENS,
     system,
     // Forced tool_choice is rejected by current models; ask for the tool and accept text as a fallback.
     tools: [MESSAGE_TOOL],
     tool_choice: { type: "auto" },
     messages: [{ role: "user", content: `${instruction}\n\nDeliver the email by calling the ${MESSAGE_TOOL.name} tool.` }],
-  });
+  }).finalMessage();
 
   if (response.stop_reason === "refusal") {
     console.warn("[MarketerReply] The model declined to write the message.");

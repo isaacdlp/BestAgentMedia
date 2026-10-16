@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1130" viewBox="0 0 1600 1130">
+  <rect width="1600" height="1130" fill="#9fb3c4"/>
+  <circle cx="1060" cy="380" r="70" fill="#e9eef2"/>
+  <path d="M420 860 L700 470 L880 690 L1010 560 L1220 860 Z" fill="#e9eef2"/>
+  <text x="800" y="980" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" fill="#ffffff">Drop an article here or replace this photo</text>
+</svg>

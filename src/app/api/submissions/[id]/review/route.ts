@@ -1,10 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { UserRole } from "@prisma/client";
+import { SubmissionStatus, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getSubmissionScope } from "@/lib/access";
 import { launchAgentTask, step } from "@/lib/agent-task-runner";
 import { getCurrentUser } from "@/lib/auth";
+import { MAX_OUTPUT_TOKENS } from "@/lib/claude-request";
 import { prisma } from "@/lib/db";
+import { EDITORIAL_GUIDANCE, formatReceivedInfo, getSubmissionReceivedInfo, submissionReviewsWhere } from "@/lib/submission-agent-requests";
 
 export const maxDuration = 300;
 
@@ -37,8 +39,9 @@ export async function POST(
   }
 
   const agentSettings = (agent.settings as Record<string, unknown>) ?? {};
-  const model = typeof agentSettings.model === "string" ? agentSettings.model : "claude-sonnet-4-5";
-  const maxOutputTokens = typeof agentSettings.maxOutputTokens === "number" ? agentSettings.maxOutputTokens : 4000;
+  const model = typeof agentSettings.model === "string" ? agentSettings.model : "claude-sonnet-5-5";
+  // Streamed, so a high ceiling is safe; thinking counts toward it and only generated tokens are billed
+  const maxOutputTokens = Math.max(typeof agentSettings.maxOutputTokens === "number" ? agentSettings.maxOutputTokens : 0, MAX_OUTPUT_TOKENS);
 
   const scope = await getSubmissionScope(user);
   if (!scope) {
@@ -64,9 +67,16 @@ export async function POST(
     return NextResponse.json({ error: "Editorial review is not configured (missing CLAUDE_KEY)." }, { status: 503 });
   }
 
+  // A review moves a draft submission into review as soon as it starts
+  await prisma.contentSubmission.updateMany({
+    where: { id: submission.id, status: SubmissionStatus.DRAFT },
+    data: { status: SubmissionStatus.IN_REVIEW },
+  });
+
   const task = await launchAgentTask({
     agentId: agent.id,
     label: `Editorial review · Submission · ${submission.title}`,
+    subject: { type: "submission", id: submission.id },
     triggeredById: user.id,
     steps: [
       step("info", `Starting editorial review for submission "${submission.title}" in ${submission.publication.name}`),
@@ -76,22 +86,21 @@ export async function POST(
     work: async ({ agentTaskId, log }) => {
       // Check for a prior review so we can compute a delta
       const previousReview = await prisma.agentTask.findFirst({
-        where: {
-          agentId: agent.id,
-          id: { not: agentTaskId },
-          status: "SUCCEEDED",
-          result: { path: ["referenceId"], equals: submission.id },
-        },
+        where: { ...submissionReviewsWhere(agent.id, submission.id), id: { not: agentTaskId } },
         orderBy: { completedAt: "desc" },
         select: { id: true, result: true },
       });
 
+      // Information the submitter sent on info requests; it is not in the body until the Copywriter applies it
+      const receivedInfo = formatReceivedInfo(await getSubmissionReceivedInfo(submission.id));
+      if (receivedInfo) log("info", "Including information received from the submitter on info requests");
+
       log("info", `Calling ${model} for editorial analysis`);
       const client = new Anthropic({ apiKey });
-      const message = await client.messages.create({
+      const message = await client.messages.stream({
         model,
         max_tokens: maxOutputTokens,
-        system: `You are an experienced editor for a local community publication. Review content submissions and return structured editorial feedback as JSON. Be constructive, specific, and practical. Focus on community storytelling quality.`,
+        system: `${EDITORIAL_GUIDANCE} Review content submissions and return structured editorial feedback as JSON.`,
         messages: [
           {
             role: "user",
@@ -103,7 +112,10 @@ Title: ${submission.title}
 
 Body:
 ${submission.body}
-
+${receivedInfo ? `
+Information the contributor has since sent by email (not in the body yet; the editors will work it in). Do not list anything answered here as missing; suggest where it should go instead:
+${receivedInfo}
+` : ""}
 Return ONLY a valid JSON object — no markdown, no explanation, no code fences:
 
 {
@@ -117,7 +129,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, no code fences:
 }`,
           },
         ],
-      });
+      }).finalMessage();
 
       const inputTokens = message.usage.input_tokens;
       const outputTokens = message.usage.output_tokens;

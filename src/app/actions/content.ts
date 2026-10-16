@@ -1,5 +1,6 @@
 "use server";
 
+import { stopTasksForSubject } from "@/lib/task-subjects";
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir } from "node:fs/promises";
 import { extname, resolve } from "node:path";
@@ -112,7 +113,6 @@ export async function updateIssueDetails(formData: FormData) {
   const scope = await getIssueScope(user);
   if (!scope) redirect("/dashboard");
   const id = idSchema.parse(formData.get("id"));
-  const status = statusSchema.parse(formData.get("status"));
   const publicationDate = parsePublicationDate(formData.get("publicationDate"));
   const { name, slug, description } = parseIssueText(formData);
   const current = await prisma.issue.findFirst({
@@ -128,8 +128,20 @@ export async function updateIssueDetails(formData: FormData) {
   }
   const result = await prisma.issue.updateMany({
     where: { id, ...scope },
-    data: { status, publicationDate, name, slug, description },
+    data: { publicationDate, name, slug, description },
   });
+  if (result.count !== 1) throw new Error("Issue not found or not accessible.");
+  revalidatePath("/issues");
+  revalidatePath(`/issues/${id}`);
+}
+
+export async function updateIssueStatus(formData: FormData) {
+  const user = await requireUser();
+  const scope = await getIssueScope(user);
+  if (!scope) redirect("/dashboard");
+  const id = idSchema.parse(formData.get("id"));
+  const status = statusSchema.parse(formData.get("status"));
+  const result = await prisma.issue.updateMany({ where: { id, ...scope }, data: { status } });
   if (result.count !== 1) throw new Error("Issue not found or not accessible.");
   revalidatePath("/issues");
   revalidatePath(`/issues/${id}`);
@@ -148,6 +160,7 @@ export async function updateArticleStatus(formData: FormData) {
     data: { status },
   });
   if (result.count !== 1) throw new Error("Article not found or not accessible.");
+  if (status === "ACCEPTED") await stopTasksForSubject("article", id);
   revalidatePath("/articles");
   revalidatePath(`/articles/${id}`);
 }
@@ -165,11 +178,17 @@ export async function promoteSubmissionToArticle(formData: FormData) {
     include: { images: { orderBy: { createdAt: "asc" } } },
   });
   if (!submission) throw new Error("Submission not found or not accessible.");
+  if (submission.status !== "ACCEPTED") throw new Error("Accept the submission before creating an article.");
   let article = await prisma.article.findUnique({
     where: { sourceSubmissionId: id },
     select: { id: true },
   });
   if (!article) {
+    const latestIssue = await prisma.issue.findFirst({
+      where: { publicationId: submission.publicationId },
+      orderBy: [{ publicationDate: "desc" }, { createdAt: "desc" }],
+      select: { id: true },
+    });
     await mkdir(articleImageDirectory, { recursive: true });
     const copiedFileNames: string[] = [];
     const images = submission.images.map((image, position) => ({
@@ -192,11 +211,12 @@ export async function promoteSubmissionToArticle(formData: FormData) {
           status: ArticleStatus.DRAFT,
           sourceSubmissionId: id,
           createdByUserId: user.id,
+          businessId: submission.businessId,
+          ...(latestIssue ? { issues: { create: { issueId: latestIssue.id } } } : {}),
           images: {
             create: images.map((image) => ({
               fileName: image.articleFileName,
               originalName: image.originalName,
-              caption: "",
               mimeType: image.mimeType,
               size: image.size,
               position: image.position,

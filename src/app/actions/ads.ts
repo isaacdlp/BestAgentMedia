@@ -1,5 +1,6 @@
 "use server";
 
+import { stopTasksForSubject } from "@/lib/task-subjects";
 import { AdvertisementStatus, UserRole } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -215,6 +216,7 @@ export async function updateAdStatus(formData: FormData) {
   }
 
   await prisma.advertisement.update({ where: { id: ad.id }, data: { status } });
+  if (status === AdvertisementStatus.APPROVED) await stopTasksForSubject("ad", ad.id);
 
   revalidatePath("/ads");
   revalidatePath(`/ads/${id}`);

@@ -8,6 +8,7 @@ import {
   prepareArticleImages,
   removeArticleImageFiles,
 } from "@/lib/article-images";
+import { parseDollarsToCents, parsePackageId, resolveArticleStyle } from "@/lib/ad-styles";
 import { prisma } from "@/lib/db";
 
 const maximumRequestBytes = 50 * 1024 * 1024 + 1024 * 1024;
@@ -57,6 +58,14 @@ export async function POST(request: Request) {
   if (!issueIds) {
     return NextResponse.json({ error: "Choose only issues of publications assigned to your workspace." }, { status: 403 });
   }
+  let pricing;
+  try {
+    pricing = parsed.data.businessId
+      ? await resolveArticleStyle(parsePackageId(formData.get("packageId")), issueIds, parseDollarsToCents(formData.get("cost")))
+      : { promotionPackageId: null, styleName: null, costCents: null };
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Choose a valid promotion style." }, { status: 400 });
+  }
 
   let images;
   try {
@@ -76,12 +85,12 @@ export async function POST(request: Request) {
         status: parsed.data.status,
         createdByUserId: user.id,
         businessId: parsed.data.businessId ?? null,
+        ...pricing,
         issues: { create: issueIds.map((issueId) => ({ issueId })) },
         images: {
           create: images.map((image) => ({
             fileName: image.fileName,
             originalName: image.originalName,
-            caption: image.caption,
             mimeType: image.mimeType,
             size: image.size,
             position: image.position,

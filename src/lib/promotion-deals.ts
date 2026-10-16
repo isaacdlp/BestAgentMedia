@@ -257,11 +257,15 @@ export async function launchPromotionReview(
     const scope = await getArticleScope(user);
     const article = await prisma.article.findFirst({
       where: { id: targetId, ...scope },
-      select: { title: true, business: businessSelect, issues: issueSelect },
+      select: { title: true, promotionPackageId: true, business: businessSelect, issues: issueSelect },
     });
     if (!article) throw new PromotionReviewError("Article not found.", 404);
     if (!article.business) {
       throw new PromotionReviewError("Link this article to a business before submitting it for review.", 400);
+    }
+    // Only paid promotions go to the business for review; an unpaid article is sold with Promote instead.
+    if (!article.promotionPackageId) {
+      throw new PromotionReviewError("Only an article with a paid promotion style can be submitted for review. Use Promote to sell it first.", 409);
     }
     title = article.title;
     business = article.business;
@@ -347,6 +351,13 @@ export async function launchPromotionReview(
       },
       select: { id: true },
     });
+    if (target === "ad") {
+      // The review starts now, so a draft ad moves into review immediately
+      await tx.advertisement.updateMany({
+        where: { id: targetId, status: AdvertisementStatus.DRAFT },
+        data: { status: AdvertisementStatus.IN_REVIEW },
+      });
+    }
     const result: PromotionTaskResult = { contentType: "promotion", dealId: deal.id, target, targetId };
     await tx.agentTask.update({ where: { id: agentTask.id }, data: { result: result as unknown as Prisma.InputJsonValue } });
     return { agentTask, deal };
@@ -385,10 +396,12 @@ async function loadDeal(dealId: number) {
           id: true,
           title: true,
           body: true,
+          promotionPackageId: true,
+          styleName: true,
           images: {
             orderBy: [{ position: "asc" }, { createdAt: "asc" }],
             take: MAX_ARTICLE_ATTACHMENTS,
-            select: { fileName: true, originalName: true, mimeType: true, caption: true },
+            select: { fileName: true, originalName: true, mimeType: true },
           },
         },
       },
@@ -409,10 +422,20 @@ function targetOf(deal: LoadedDeal): PromotionTarget {
   return deal.advertisement ? "ad" : "article";
 }
 
+/** A sponsored article already paid for (Promote sale, an earlier sign-up, or priced by staff). */
+function isPaidArticle(deal: LoadedDeal): boolean {
+  return Boolean(deal.article && (deal.article.promotionPackageId !== null || deal.article.styleName));
+}
+
+/** Ads and paid articles only need approval; other articles are reviewed and sold a package. */
+function messageKindOf(deal: LoadedDeal): "ad" | "article" | "paid_article" {
+  return deal.advertisement ? "ad" : isPaidArticle(deal) ? "paid_article" : "article";
+}
+
 /** Rates are read live from the publication so an updated rate card applies to the next message. */
 function packagesOf(deal: LoadedDeal): Promise<PromotionPackageOffer[]> {
-  // An ad's price and placement are agreed before it exists, so the Marketer never offers packages for it.
-  if (deal.advertisement) return Promise.resolve([]);
+  // An ad's (or paid article's) price and placement are agreed before review, so nothing is offered.
+  if (deal.advertisement || isPaidArticle(deal)) return Promise.resolve([]);
   return listPublicationPackages(deal.publicationId, targetOf(deal));
 }
 
@@ -449,6 +472,11 @@ async function buildContext(deal: LoadedDeal, settings: PromotionSettings): Prom
         ? "The current ad artwork is attached to or shown with your message."
         : "The ad artwork is still being finalized; tell them it will be sent for approval as soon as it is ready.",
     );
+  } else if (deal.article && isPaidArticle(deal)) {
+    lines.push(
+      `Content under review: a sponsored article about the business titled "${deal.article.title}".`,
+      `The sale is already agreed: the business bought this sponsored feature${deal.article.styleName ? ` ("${deal.article.styleName}")` : ""} in the issue. Do not sell, quote prices or mention packages; your goal is their approval of the article.`,
+    );
   } else if (deal.article) {
     lines.push(
       `Content under review: an article about the business titled "${deal.article.title}".`,
@@ -465,7 +493,7 @@ async function buildContext(deal: LoadedDeal, settings: PromotionSettings): Prom
     lines.push(`The ad-submission form for new or revised ad materials: ${settings.advertisingUrl}`);
   }
   lines.push(`Content review status so far: ${deal.contentStatus.toLowerCase().replace("_", " ")}.`);
-  if (!deal.advertisement) {
+  if (!deal.advertisement && !isPaidArticle(deal)) {
     lines.push(
       `Promotion status so far: ${deal.status.toLowerCase().replace("_", " ")}${deal.packageName ? ` (package: ${deal.packageName}${deal.priceCents != null ? `, ${formatCents(deal.priceCents)}` : ""})` : ""}.`,
     );
@@ -572,14 +600,15 @@ export async function sendInitialPromotionEmail(dealId: number): Promise<void> {
     const agent = await getMarketerAgent();
     const settings = getPromotionSettings(agent.settings);
     const target = targetOf(deal);
+    const emailKind = target === "ad" ? "Ad approval" : isPaidArticle(deal) ? "Article approval" : "Review and proposal";
     const attachments = attachmentsFor(deal);
 
     await updateTask(agentTaskId, [
-      step("info", `Calling ${settings.model} to write the ${target === "ad" ? "ad approval" : "review and proposal"} email`),
+      step("info", `Calling ${settings.model} to write the ${emailKind.toLowerCase()} email`),
     ]);
     const message = await generateMarketerMessage({
       mode: "initial",
-      kind: target,
+      kind: messageKindOf(deal),
       model: settings.model,
       agent: deal.subAgent,
       recipientName: deal.business.name,
@@ -620,7 +649,7 @@ export async function sendInitialPromotionEmail(dealId: number): Promise<void> {
     await updateTask(agentTaskId, [
       step(
         "success",
-        `${target === "ad" ? "Ad approval" : "Review and proposal"} email sent to ${sent.sentTo}${sent.sentTo !== deal.business.email ? ` (DUMMY_EMAIL override for ${deal.business.email})` : ""}${attachments.length ? ` with ${attachments.length} attachment(s)` : ""}`,
+        `${emailKind} email sent to ${sent.sentTo}${sent.sentTo !== deal.business.email ? ` (DUMMY_EMAIL override for ${deal.business.email})` : ""}${attachments.length ? ` with ${attachments.length} attachment(s)` : ""}`,
       ),
       ...(deal.advertisement?.status === AdvertisementStatus.DRAFT ? [step("info", "Ad status set to In review")] : []),
       step(
@@ -668,6 +697,8 @@ export async function handlePromotionInboundMessage(threadId: string): Promise<v
   try {
     const taskStatus = deal.agentTask.status;
     const isAd = Boolean(deal.advertisement);
+    // Ads and paid articles are already sold: approval completes the conversation and nothing is sold.
+    const saleAgreed = isAd || isPaidArticle(deal);
     // Staff stopped the conversation (a decline also stops it, but the advertiser may come back).
     if (taskStatus === AgentTaskStatus.FAILED) return;
     if (taskStatus === AgentTaskStatus.STOPPED && deal.status !== PromotionDealStatus.DECLINED) return;
@@ -696,7 +727,7 @@ export async function handlePromotionInboundMessage(threadId: string): Promise<v
     try {
       message = await generateMarketerMessage({
         mode: "reply",
-        kind: targetOf(deal),
+        kind: messageKindOf(deal),
         model: settings.model,
         agent: deal.subAgent,
         recipientName: deal.business.name,
@@ -742,10 +773,10 @@ export async function handlePromotionInboundMessage(threadId: string): Promise<v
       dealData.contentStatus = PromotionContentStatus.APPROVED;
       newSteps.push(step("success", "Advertiser approved the content"));
       await recordEmailReview(AdReviewDecision.APPROVED, message.requestedChanges);
-      // The ad's sale is already agreed, so its approval is what completes the conversation.
-      if (isAd) {
+      // The sale is already agreed, so approval is what completes the conversation.
+      if (saleAgreed) {
         taskData = { status: AgentTaskStatus.SUCCEEDED, completedAt: new Date(), error: null };
-        newSteps.push(step("success", "Ad approved — conversation complete (the Marketer keeps answering if they write again)"));
+        newSteps.push(step("success", `${isAd ? "Ad" : "Article"} approved — conversation complete (the Marketer keeps answering if they write again)`));
       }
     } else if (message.contentFeedback === "changes_requested") {
       dealData.contentStatus = PromotionContentStatus.CHANGES_REQUESTED;
@@ -754,15 +785,15 @@ export async function handlePromotionInboundMessage(threadId: string): Promise<v
       newSteps.push(step("info", `Advertiser requested changes: ${changes.replace(/\s+/g, " ").slice(0, 300)}`));
       await recordEmailReview(AdReviewDecision.CHANGES_REQUESTED, changes);
       // Changes after an approval reopen the conversation until the ad is approved again.
-      if (isAd && taskStatus === AgentTaskStatus.SUCCEEDED) {
+      if (saleAgreed && taskStatus === AgentTaskStatus.SUCCEEDED) {
         taskData = { status: AgentTaskStatus.RUNNING, completedAt: null };
-        newSteps.push(step("info", "Conversation reopened — waiting for a revised ad to be approved"));
+        newSteps.push(step("info", `Conversation reopened — waiting for a revised ${isAd ? "ad" : "article"} to be approved`));
       }
     }
 
-    const chosen = isAd ? undefined : packages.find((item) => String(item.id) === message.packageKey);
-    if (isAd) {
-      // No package sale on ads. Only a cancellation or an opt-out changes the deal.
+    const chosen = saleAgreed ? undefined : packages.find((item) => String(item.id) === message.packageKey);
+    if (saleAgreed) {
+      // No package sale on ads or paid articles. Only a cancellation or an opt-out changes the deal.
       if (message.dealDecision === "declined" || message.optedOut) {
         Object.assign(dealData, { status: PromotionDealStatus.DECLINED, ...(message.optedOut ? { optedOut: true } : {}) });
         newSteps.push(
@@ -770,7 +801,7 @@ export async function handlePromotionInboundMessage(threadId: string): Promise<v
             "info",
             message.optedOut
               ? "Advertiser asked not to be contacted again — conversation stopped"
-              : "Advertiser wants to cancel the ad — conversation stopped; contact them from the publication team",
+              : `Advertiser wants to cancel the ${isAd ? "ad" : "sponsored article"} — conversation stopped; contact them from the publication team`,
           ),
         );
         taskData = { status: AgentTaskStatus.STOPPED, completedAt: new Date() };
@@ -790,6 +821,14 @@ export async function handlePromotionInboundMessage(threadId: string): Promise<v
           optedOut: false,
         });
         newSteps.push(step("success", `Advertiser signed up for ${chosen.name} at ${formatCents(chosen.priceCents)} — agreement and invoice to be sent by the publication team`));
+        // The article now runs as the sponsored feature they bought, priced as agreed.
+        if (deal.article) {
+          await prisma.article.update({
+            where: { id: deal.article.id },
+            data: { promotionPackageId: chosen.id, styleName: chosen.name, costCents: chosen.priceCents },
+          });
+          newSteps.push(step("info", `Article marked as a paid promotion: ${chosen.name}, ${formatCents(chosen.priceCents)}`));
+        }
         taskData = { status: AgentTaskStatus.SUCCEEDED, completedAt: new Date(), error: null };
       }
     } else if (message.dealDecision === "declined" || message.optedOut) {
@@ -1142,7 +1181,7 @@ export async function checkPromotionFollowUps(): Promise<void> {
 
       const message = await generateMarketerMessage({
         mode: "follow_up",
-        kind: targetOf(deal),
+        kind: messageKindOf(deal),
         model: settings.model,
         agent: deal.subAgent,
         recipientName: deal.business.name,

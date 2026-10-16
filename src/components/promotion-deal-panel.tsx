@@ -136,7 +136,7 @@ export function PromotionDealDetails({
         </div>
       ) : null}
       {showConversationLink && deal.subAgent && deal.threadId ? (
-        <Link className="text-link" href={`/agents/${deal.subAgent.agentId}/sub-agents/${deal.subAgent.id}`}>
+        <Link className="text-link" href={`/agents/${deal.subAgent.agentId}/sub-agents/${deal.subAgent.id}?thread=${encodeURIComponent(deal.threadId)}`}>
           View conversation ({deal.thread?._count.messages ?? 0} messages) →
         </Link>
       ) : null}

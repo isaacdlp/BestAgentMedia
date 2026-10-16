@@ -36,6 +36,7 @@ export type TaskTemplate =
   | "creative"
   | "email-draft"
   | "review"
+  | "revision"
   | "promotion"
   | "sale"
   | "generic";
@@ -50,5 +51,6 @@ export function getTaskTemplate(source: TaskSource, agentSlug: string | null, re
   if (record.contentType === "sale") return "sale";
   if (typeof record.emailTo === "string") return "email-draft";
   if (record.contentType === "submission" || record.contentType === "article") return "review";
+  if (record.contentType === "submission-revision" || record.contentType === "article-revision") return "revision";
   return "generic";
 }

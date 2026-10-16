@@ -129,8 +129,8 @@ export async function POST(request: Request) {
       select: { id: true },
     });
 
-    // Fire-and-forget: queue an Assistant agent email draft for this submission
-    void triggerSubmissionInvite(submission.id);
+    // Launch the Assistant task that writes an invitation draft (the task itself runs after the response)
+    await triggerSubmissionInvite(submission.id);
 
     return NextResponse.json(
       {

@@ -1,9 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { UserRole } from "@prisma/client";
+import { ArticleStatus, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getArticleScope } from "@/lib/access";
 import { launchAgentTask, step } from "@/lib/agent-task-runner";
 import { getCurrentUser } from "@/lib/auth";
+import { MAX_OUTPUT_TOKENS } from "@/lib/claude-request";
 import { prisma } from "@/lib/db";
 
 export const maxDuration = 300;
@@ -37,8 +38,9 @@ export async function POST(
   }
 
   const agentSettings = (agent.settings as Record<string, unknown>) ?? {};
-  const model = typeof agentSettings.model === "string" ? agentSettings.model : "claude-sonnet-4-5";
-  const maxOutputTokens = typeof agentSettings.maxOutputTokens === "number" ? agentSettings.maxOutputTokens : 4000;
+  const model = typeof agentSettings.model === "string" ? agentSettings.model : "claude-sonnet-5-5";
+  // Streamed, so a high ceiling is safe; thinking counts toward it and only generated tokens are billed
+  const maxOutputTokens = Math.max(typeof agentSettings.maxOutputTokens === "number" ? agentSettings.maxOutputTokens : 0, MAX_OUTPUT_TOKENS);
 
   const scope = await getArticleScope(user);
   const article = await prisma.article.findFirst({
@@ -65,9 +67,16 @@ export async function POST(
   const publicationNames = [...new Set(article.issues.map((i) => i.issue.publication.name))].join(", ") || "unspecified";
   const issueNames = article.issues.map((i) => i.issue.name).join(", ") || "unassigned";
 
+  // A review moves a draft article into review as soon as it starts
+  await prisma.article.updateMany({
+    where: { id: article.id, status: ArticleStatus.DRAFT },
+    data: { status: ArticleStatus.IN_REVIEW },
+  });
+
   const task = await launchAgentTask({
     agentId: agent.id,
     label: `Editorial review · Article · ${article.title}`,
+    subject: { type: "article", id: article.id },
     triggeredById: user.id,
     steps: [
       step("info", `Starting editorial review for article "${article.title}"`),
@@ -77,7 +86,7 @@ export async function POST(
     work: async ({ log }) => {
       log("info", `Calling ${model} for editorial analysis`);
       const client = new Anthropic({ apiKey });
-      const message = await client.messages.create({
+      const message = await client.messages.stream({
         model,
         max_tokens: maxOutputTokens,
         system: `You are an experienced editor for a local community publication. Review articles and return structured editorial feedback as JSON. Be constructive, specific, and practical. Focus on publication-ready quality.`,
@@ -105,7 +114,7 @@ Return ONLY a valid JSON object — no markdown, no explanation, no code fences:
 }`,
           },
         ],
-      });
+      }).finalMessage();
 
       const inputTokens = message.usage.input_tokens;
       const outputTokens = message.usage.output_tokens;

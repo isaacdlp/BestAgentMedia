@@ -1,15 +1,25 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { AgentTaskStatus, UserRole } from "@prisma/client";
+import { UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getSubmissionScope } from "@/lib/access";
 import { launchAgentTask, step } from "@/lib/agent-task-runner";
 import { getCurrentUser } from "@/lib/auth";
+import { draftContributorEmail } from "@/lib/contributor-email";
 import { prisma } from "@/lib/db";
+import { findAssistantSubAgent } from "@/lib/reachout-tasks";
+import { sendSubAgentEmail } from "@/lib/sub-agent-email";
+import {
+  CONTRIBUTOR_ASK_POLICY,
+  formatReviewFeedback,
+  readSubmissionAgentRequest,
+  reviewOpenItems,
+  submissionDatesNote,
+  submissionReviewsWhere,
+} from "@/lib/submission-agent-requests";
 
 export const maxDuration = 300;
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const user = await getCurrentUser();
@@ -48,6 +58,9 @@ export async function POST(
       title: true,
       submitterName: true,
       submitterEmail: true,
+      body: true,
+      storyType: true,
+      createdAt: true,
       publication: { select: { name: true } },
     },
   });
@@ -64,7 +77,9 @@ export async function POST(
     return NextResponse.json({ error: "Clarification drafting is not configured (missing CLAUDE_KEY)." }, { status: 503 });
   }
 
-  // Find most recent editor review for context (missing elements, suggestions)
+  const { instructions, reviewTaskId } = await readSubmissionAgentRequest(request);
+
+  // Use the review the request was started from (or the most recent one) for context
   const editorAgent = await prisma.agent.findUnique({
     where: { slug: "editor" },
     select: { id: true },
@@ -72,22 +87,19 @@ export async function POST(
   const latestReview = editorAgent
     ? await prisma.agentTask.findFirst({
         where: {
-          agentId: editorAgent.id,
-          status: AgentTaskStatus.SUCCEEDED,
-          result: { path: ["referenceId"], equals: submission.id },
+          ...submissionReviewsWhere(editorAgent.id, submission.id),
+          ...(reviewTaskId ? { id: reviewTaskId } : {}),
         },
         orderBy: { completedAt: "desc" },
         select: { id: true, result: true },
       })
     : null;
+  if (reviewTaskId && !latestReview) {
+    return NextResponse.json({ error: "Review not found for this submission." }, { status: 404 });
+  }
 
-  const reviewResult = latestReview?.result as Record<string, unknown> | null;
-  const missingElements: string[] = Array.isArray(reviewResult?.missingElements)
-    ? (reviewResult.missingElements as string[])
-    : [];
-  const suggestions: string[] = Array.isArray(reviewResult?.suggestions)
-    ? (reviewResult.suggestions as string[])
-    : [];
+  const { missingElements, suggestions } = reviewOpenItems(latestReview?.result);
+  const reviewFeedback = formatReviewFeedback(latestReview?.result);
 
   const appUrl = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
   const editUrl = `${appUrl}/submissions/${submission.id}`;
@@ -98,71 +110,78 @@ export async function POST(
       ? agentSettings.clarificationModel
       : "claude-haiku-5-5";
 
+  const subAgent = await findAssistantSubAgent();
+  if (!subAgent) {
+    return NextResponse.json(
+      { error: "No Assistant sub agent with email (SMTP) configured. Configure one in the Assistant settings." },
+      { status: 503 },
+    );
+  }
+
   const initialSteps = [
-    step("info", `Drafting clarification email for "${submission.title}" in ${submission.publication.name}`),
-    step("info", `Recipient: ${submitterEmail} (${submission.submitterName ?? "unknown"})`),
+    step("info", `Requesting information for "${submission.title}" in ${submission.publication.name}`),
+    step("info", `Recipient: ${submitterEmail} (${submission.submitterName ?? "unknown"}) · sent by ${subAgent.name}`),
     latestReview
       ? step("info", `Using editorial review ${latestReview.id} for context`)
       : step("info", "No prior review found — drafting general clarification request"),
   ];
   if (missingElements.length || suggestions.length) {
-    initialSteps.push(step("info", `Review items: ${missingElements.length} missing element(s), ${suggestions.length} suggestion(s) — all included in email`));
+    initialSteps.push(step("info", `Full review feedback shared with the Assistant: ${missingElements.length} missing element(s), ${suggestions.length} suggestion(s)`));
+  }
+  if (instructions) {
+    initialSteps.push(step("info", `Custom instructions: ${instructions}`));
   }
 
   const task = await launchAgentTask({
     agentId: assistantAgent.id,
     label: `Info request · ${submission.submitterName ?? submitterEmail} · ${submission.title}`,
+    subject: { type: "submission", id: submission.id },
     triggeredById: user.id,
     steps: initialSteps,
-    work: async ({ log }) => {
-      const allItems = [
-        ...missingElements.map((e) => `- Missing: ${e}`),
-        ...suggestions.map((s) => `- Suggestion: ${s}`),
-      ];
-      const editorContext =
-        allItems.length
-          ? `\n\nThe editorial team flagged the following items — include every single one in the email, listed clearly:\n${allItems.join("\n")}`
-          : "";
+    // The conversation stays Ongoing until the submitter has sent what is needed (see clarification-reply)
+    keepRunning: true,
+    work: async ({ agentTaskId, log }) => {
+      log("info", `Calling ${model} to write the information request`);
 
-      log("info", `Calling ${model} to draft clarification email`);
-
-      const client = new Anthropic({ apiKey });
-      const message = await client.messages.create({
+      const draft = await draftContributorEmail({
+        apiKey,
         model,
-        max_tokens: 800,
-        system: `You are a warm and supportive community publication assistant who has an ongoing relationship with local story contributors. You write personal, encouraging emails that feel genuinely human. You never sound robotic or form-letter. Keep it brief, friendly, and actionable.`,
-        messages: [
-          {
-            role: "user",
-            content: `Draft a clarification email to a contributor named "${submission.submitterName ?? "there"}" about their story submission titled "${submission.title}" for ${submission.publication.name}.${editorContext}
+        requiredLink: editUrl,
+        prompt: `You are ${subAgent.name}${subAgent.soul ? ` (your persona: ${subAgent.soul})` : ""}. Write an email to ${submission.submitterName ? `the contributor ${submission.submitterName}` : "the contributor"} asking for the information the editorial team needs to publish their story in ${submission.publication.name}.
 
-The email must:
-1. Warmly acknowledge their submission and express genuine interest in their story
-2. List EVERY flagged item from above as a numbered list — do not summarise, omit, or combine any of them; if nothing was flagged, ask for a bit more detail in general
-3. After the list, explain they have two options:
-   a) Click the link below to edit the submission directly
-   b) Simply reply to this email with the requested information or photos
-4. Show the edit link on its own line, exactly as: ${editUrl}
-5. Keep the tone conversational and human — under 220 words total
-6. Sound like it comes from a real person who cares, not an automated system
+Their submission:
+Title: ${submission.title}
+Story type: ${submission.storyType ?? "unspecified"}
+Story:
+${submission.body}
 
-Return ONLY the email body text (no subject line). Start directly with the greeting.`,
-          },
-        ],
+${submissionDatesNote(submission.createdAt)}
+
+${reviewFeedback ? `The editorial review of this submission (internal; do not quote scores or internal wording, translate it into friendly, concrete requests):\n${reviewFeedback}` : "There is no editorial review yet: read the story yourself and ask only for the essential details a local magazine editor could not get without them."}
+${instructions ? `\nInstructions from the editorial team for this email (follow them):\n${instructions}\n` : ""}
+${CONTRIBUTOR_ASK_POLICY}
+
+Guidance:
+- Show you actually read their story: mention something specific from it and what you liked (the review's strengths can help).
+- Treat the review's missing elements and suggestions as input, not a checklist: keep only the essential ones that depend on the contributor, as a short numbered list (or a single sentence if there is just one).
+- Mention briefly that they can reply to this email or edit the submission themselves at this link, which must appear on its own line exactly as written: ${editUrl}
+- Warm, natural and brief (under 150 words), like a real person from the local publication team who cares about the story. No form-letter phrases.
+- Plain text. Sign off with a short closing; the sender's name and signature are added automatically.`,
       });
+      if (draft.revisedForLink) log("info", "First draft omitted the edit link — the model revised it");
+      const emailBody = draft.body;
+      const emailSubject = draft.subject;
 
-      const textBlock = message.content.find((b) => b.type === "text");
-      if (!textBlock || textBlock.type !== "text") {
-        throw new Error("Model returned no text content");
-      }
-
-      const generatedBody = textBlock.text.trim();
-      // Force the link into the body — append a standardized footer if the model omitted it
-      const linkFooter = `\n\nEdit your submission directly:\n${editUrl}\n\nOr simply reply to this email with the information or photos — we'll add them for you.`;
-      const emailBody = generatedBody.includes(editUrl) ? generatedBody : generatedBody + linkFooter;
-      const emailSubject = `Quick follow-up on your story: "${submission.title}"`;
-
-      log("success", "Clarification email drafted — queued for review, not sent yet");
+      const { threadId, sentTo } = await sendSubAgentEmail({
+        subAgentId: subAgent.id,
+        taskId: agentTaskId,
+        toEmail: submitterEmail,
+        toName: submission.submitterName ?? undefined,
+        subject: emailSubject,
+        bodyText: emailBody,
+      });
+      await prisma.agentTask.update({ where: { id: agentTaskId }, data: { subAgentId: subAgent.id } });
+      log("success", `Information request sent to ${sentTo} — waiting for the submitter's reply`);
 
       return {
         trigger: "submission",
@@ -174,12 +193,18 @@ Return ONLY the email body text (no subject line). Start directly with the greet
         bodyPreview: emailBody,
         editUrl,
         missingElements,
-        reviewItems: allItems.map((item) => item.replace(/^- (Missing|Suggestion): /, "")),
+        reviewItems: [...missingElements, ...suggestions],
         reviewTaskId: latestReview?.id ?? null,
-        status: "draft",
+        instructions,
+        status: "sent",
+        threadId,
+        sentTo,
+        sentAt: new Date().toISOString(),
+        followUpCount: 0,
       };
     },
   });
 
   return NextResponse.json({ task }, { status: 202 });
 }
+

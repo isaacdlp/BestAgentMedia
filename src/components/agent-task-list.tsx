@@ -12,6 +12,8 @@ export type TaskResult = {
   // Designer
   pageCount?: number;
   elementCount?: number;
+  articleCount?: number;
+  adCount?: number;
   inputTokens?: number;
   outputTokens?: number;
   thinkingTokens?: number;
@@ -92,7 +94,15 @@ function DeltaBadge({ value }: { value: number | null | undefined }) {
   return <span className={cls}>{sign}{value}</span>;
 }
 
-export function TaskResultSummary({ result, agentId }: { result: TaskResult; agentId: number }) {
+export function TaskResultSummary({
+  result,
+  agentId,
+  subAgentId,
+}: {
+  result: TaskResult;
+  agentId: number;
+  subAgentId?: number | null;
+}) {
   if (result.emailTo) {
     const pitchLabel =
       result.pitchType === "sponsored_article"
@@ -131,7 +141,7 @@ export function TaskResultSummary({ result, agentId }: { result: TaskResult; age
           </details>
         ) : null}
         {result.status === "sent" && result.threadId ? (
-          <a className="text-link" href={`/agents/${agentId}/sub-agents`} style={{ fontSize: 12, marginTop: 4, display: "inline-block" }}>
+          <a className="text-link" href={subAgentId ? `/agents/${agentId}/sub-agents/${subAgentId}?thread=${encodeURIComponent(result.threadId)}` : `/agents/${agentId}/sub-agents`} style={{ fontSize: 12, marginTop: 4, display: "inline-block" }}>
             View conversation →
           </a>
         ) : result.status === "draft" ? (
@@ -212,6 +222,8 @@ export function TaskResultSummary({ result, agentId }: { result: TaskResult; age
   const parts: string[] = [];
   if (result.pageCount !== undefined) parts.push(`${result.pageCount} pages`);
   if (result.elementCount !== undefined) parts.push(`${result.elementCount} elements`);
+  if (result.articleCount !== undefined) parts.push(`${result.articleCount} articles`);
+  if (result.adCount !== undefined) parts.push(`${result.adCount} ads`);
   if (result.inputTokens !== undefined) parts.push(`${result.inputTokens} in / ${result.outputTokens ?? 0} out tokens`);
   if (!parts.length) return null;
   return <p className="agent-task-result">{parts.join(" · ")}</p>;
@@ -247,7 +259,7 @@ function AgentTaskCard({
   const [sendError, setSendError] = useState("");
   const isActive = task.status === "PENDING" || task.status === "RUNNING";
   const canRedeploy = task.status === "SUCCEEDED" && task.issueId &&
-    !!(task.result as Record<string, unknown> | null)?.design;
+    !!((task.result as Record<string, unknown> | null)?.design || (task.result as Record<string, unknown> | null)?.composition);
   const result = task.result as TaskResult | null;
   const canSend = task.status === "SUCCEEDED" && result?.emailTo && result?.status === "draft" && subAgents.length > 0;
   const duration = durationLabel(task.startedAt, task.completedAt);
@@ -335,7 +347,7 @@ function AgentTaskCard({
         <p className="form-error agent-task-error">{sendError}</p>
       ) : null}
 
-      {task.result ? <TaskResultSummary agentId={agentId} result={task.result as TaskResult} /> : null}
+      {task.result ? <TaskResultSummary agentId={agentId} result={task.result as TaskResult} subAgentId={selectedSubAgentId || subAgents[0]?.id} /> : null}
 
       <div className="agent-task-card-footer">
         <button

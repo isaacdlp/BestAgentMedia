@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { renderTranscript, type ThreadMessage } from "@/lib/assistant-reply";
+import { INLINE_REPLY_NOTE, renderTranscript, type ThreadMessage } from "@/lib/assistant-reply";
+import { MAX_OUTPUT_TOKENS } from "@/lib/claude-request";
 import { COMPANY_BRIEF } from "@/lib/marketer-reply";
 import { formatCents, type PromotionPackageOffer } from "@/lib/promotion-packages";
 
@@ -162,7 +163,7 @@ const DECISION_GUIDE = `How to fill the tool fields:
 - opted_out: true only when they ask not to be contacted again.`;
 
 function instructionFor(mode: SaleMode, recipient: string, transcript: string): string {
-  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}`;
+  const thread = `Here is the email conversation so far, oldest first:\n\n${transcript || "(no messages yet)"}\n\n${INLINE_REPLY_NOTE}`;
   switch (mode) {
     case "initial":
       return `Write the first email to ${recipient}. Introduce yourself briefly as part of the local publication team, say why you are writing to them specifically (from what they do and where they are), and present the forthcoming issue as an opportunity for them. Recommend the package or bundle that fits them best with its exact price (and its bundle saving, if it is a bundle), mention one alternative at most, and close with an easy call to action. Keep it under 260 words. Give it a specific subject line that reads like a person wrote it, not a promotion. Put the offer you recommend in items and its discount in discount_percent; decision "none"; opted_out false.`;
@@ -286,9 +287,9 @@ export async function generateSaleMessage(opts: {
     : "";
 
   const client = new Anthropic({ apiKey });
-  const response = await client.messages.create({
+  const response = await client.messages.stream({
     model: opts.model,
-    max_tokens: 16000,
+    max_tokens: MAX_OUTPUT_TOKENS,
     system,
     output_config: { effort: "high" },
     // Forced tool_choice is rejected by current models; ask for the tool in the prompt instead.
@@ -300,7 +301,7 @@ export async function generateSaleMessage(opts: {
         content: `${instructionFor(opts.mode, opts.recipientName, transcript)}${correction}\n\nDeliver the email by calling the ${SALE_TOOL.name} tool.`,
       },
     ],
-  });
+  }).finalMessage();
 
   if (response.stop_reason === "refusal") {
     console.warn("[MarketerSale] The model declined to write the message.");

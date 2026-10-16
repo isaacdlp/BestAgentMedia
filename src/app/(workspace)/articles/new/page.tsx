@@ -3,6 +3,7 @@ import { UserRole } from "@prisma/client";
 import { ArticleEditor } from "@/components/article-editor";
 import { getPublicationScope, listIssueOptions } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
+import { listAdStyleOptions } from "@/lib/ad-styles";
 import { prisma } from "@/lib/db";
 
 export default async function NewArticlePage() {
@@ -16,9 +17,11 @@ export default async function NewArticlePage() {
     listIssueOptions(user),
     prisma.business.findMany({
       orderBy: { name: "asc" },
-      select: { id: true, name: true },
+      select: { id: true, name: true, city: true, stateCode: true, postalCode: true, primaryCategory: true },
     }),
   ]);
+
+  const promotionStyles = await listAdStyleOptions(issues.map((issue) => issue.publicationId), "ARTICLE");
 
   return (
     <>
@@ -29,9 +32,7 @@ export default async function NewArticlePage() {
           <p className="muted">Write a new piece and assign it to one or more issues.</p>
         </div>
       </div>
-      <section className="panel">
-        <ArticleEditor article={null} businesses={businesses} canEdit issues={issues} />
-      </section>
+      <ArticleEditor article={null} businesses={businesses} canEdit issues={issues} promotionStyles={promotionStyles} />
     </>
   );
 }

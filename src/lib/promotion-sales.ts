@@ -80,12 +80,40 @@ export type SaleLaunchResult = { tasks: RegistryTaskRef[]; skipped: { businessId
  */
 export async function launchPromotionSales(
   user: AwaitedUser,
-  input: { issueId: string; businessIds: number[]; instructions: string },
+  input: { issueId: string; businessIds: number[]; instructions: string; articleId?: string },
 ): Promise<SaleLaunchResult> {
   if (user.role !== UserRole.ADMIN) throw new PromotionReviewError("Only administrators can launch promotions.", 403);
   const instructions = input.instructions.trim().slice(0, MAX_PROMOTION_INSTRUCTIONS);
   const agent = await getMarketerAgent();
   if (!process.env.CLAUDE_KEY) throw new PromotionReviewError("Promotions are not configured (missing CLAUDE_KEY).", 503);
+
+  // Promote on an article page: sell that article to its own business as a paid sponsored feature.
+  const article = input.articleId
+    ? await prisma.article.findUnique({
+        where: { id: input.articleId },
+        select: {
+          id: true,
+          title: true,
+          businessId: true,
+          promotionPackageId: true,
+          issues: { select: { issueId: true } },
+          promotionSales: {
+            where: { agentTask: { status: { in: [AgentTaskStatus.PENDING, AgentTaskStatus.RUNNING] } } },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      })
+    : null;
+  if (input.articleId) {
+    if (!article) throw new PromotionReviewError("Article not found.", 404);
+    if (!article.businessId) throw new PromotionReviewError("Link the article to a business before promoting it.", 400);
+    if (article.promotionPackageId) throw new PromotionReviewError("This article already has a paid promotion style.", 409);
+    if (article.promotionSales.length) throw new PromotionReviewError("A promotion conversation for this article is already open.", 409);
+    if (input.businessIds.length !== 1 || input.businessIds[0] !== article.businessId) {
+      throw new PromotionReviewError("An article can only be promoted to its own business.", 400);
+    }
+  }
 
   const issue = await prisma.issue.findFirst({
     where: { id: input.issueId, ...promotableIssueWhere() },
@@ -109,6 +137,8 @@ export async function launchPromotionSales(
     );
   }
   const zipCodes = new Set(publication.zipCodes.map((zip) => zip.code));
+  // An article already slated for this issue may be sold to its business wherever the business is.
+  const articleInIssue = Boolean(article?.issues.some((item) => item.issueId === issue.id));
 
   const businesses = await prisma.business.findMany({
     where: { id: { in: input.businessIds } },
@@ -137,13 +167,13 @@ export async function launchPromotionSales(
   for (const business of businesses) {
     const reason = !business.email
       ? "no email address on record"
-      : !business.postalCode || !zipCodes.has(business.postalCode)
+      : !articleInIssue && (!business.postalCode || !zipCodes.has(business.postalCode))
         ? `ZIP code not served by ${publication.name}`
         : business.promotionSales.some((sale) => sale.optedOut) || business.promotionDeals.length
           ? "asked not to be contacted"
-          : business.promotionSales.some((sale) => sale.status === PromotionSaleStatus.PURCHASED)
+          : !article && business.promotionSales.some((sale) => sale.status === PromotionSaleStatus.PURCHASED)
             ? "already bought promotions in this issue; the Marketer keeps answering on that conversation"
-            : business.promotionSales.length
+            : business.promotionSales.some((sale) => !sale.optedOut && sale.status !== PromotionSaleStatus.PURCHASED)
               ? "a promotion conversation for this issue is already open"
               : null;
     if (reason) skipped.push({ businessId: business.id, name: business.name, reason });
@@ -168,6 +198,7 @@ export async function launchPromotionSales(
     }
     const initialSteps: TaskStep[] = [
       step("info", `Selling paid promotions in ${publication.name} · ${issue.name} (${issue.publicationDate.toISOString().slice(0, 10)}) to ${business.name}`),
+      ...(article ? [step("info", `Leading with the article "${article.title}" as a paid sponsored feature`)] : []),
       step("info", `Assigned to ${subAgent.name} (Marketer) · recipient: ${business.email}`),
       step("info", `Rate card: ${rateCard}`),
       step(
@@ -187,7 +218,9 @@ export async function launchPromotionSales(
           agentId: agent.id,
           subAgentId: subAgent.id,
           status: AgentTaskStatus.RUNNING,
-          label: `Promotion sale · ${issue.name} · ${business.name}`,
+          label: article
+            ? `Promotion sale · ${issue.name} · ${business.name} · ${article.title}`
+            : `Promotion sale · ${issue.name} · ${business.name}`,
           issueId: issue.id,
           triggeredById: user.id,
           startedAt: new Date(),
@@ -201,6 +234,7 @@ export async function launchPromotionSales(
           businessId: business.id,
           issueId: issue.id,
           publicationId: publication.id,
+          articleId: article?.id ?? null,
           subAgentId: subAgent.id,
           createdByUserId: user.id,
           instructions,
@@ -244,6 +278,7 @@ const promotionSaleSummarySelect = {
   business: { select: { id: true, name: true, email: true } },
   issue: { select: { id: true, name: true, publicationDate: true } },
   publication: { select: { id: true, name: true } },
+  article: { select: { id: true, title: true } },
   subAgent: { select: { id: true, name: true, agentId: true } },
   thread: { select: { _count: { select: { messages: true } } } },
   items: {
@@ -304,11 +339,15 @@ async function loadSale(saleId: number) {
       },
       issue: { select: { id: true, name: true, publicationDate: true } },
       publication: { select: { id: true, name: true } },
+      article: { select: { id: true, title: true, body: true, businessId: true, promotionPackageId: true, styleName: true } },
       subAgent: { select: { id: true, name: true, soul: true } },
       items: { orderBy: { id: "asc" }, include: { issue: { select: { name: true } } } },
     },
   });
 }
+
+/** Characters of the article body given to the Marketer: enough to sell it, not a whole feature. */
+const MAX_ARTICLE_CONTEXT = 6000;
 
 type LoadedSale = NonNullable<Awaited<ReturnType<typeof loadSale>>>;
 
@@ -357,6 +396,15 @@ async function buildSaleContext(sale: LoadedSale): Promise<string[]> {
       ? `This campaign is about the forthcoming issue ${sale.issue.name}, publication date ${sale.issue.publicationDate.toISOString().slice(0, 10)}.`
       : "The issue this campaign was launched for no longer exists; sell placements in the upcoming issues listed.",
   ];
+  if (sale.article && !sale.article.promotionPackageId) {
+    const body = sale.article.body.trim();
+    lines.push(
+      `This campaign is about an article the publication team has written about ${business.name}, titled "${sale.article.title}". Your main goal is to sign them up to run it as a paid sponsored feature: recommend the sponsored-article package from the rate card that fits it best first (an ad alongside it is a natural bundle). Refer to the article by its title, summarize what it says about them in a sentence or two so they can picture it in print, and never paste the whole text. Do not promise it runs for free if they decline; say the team decides editorial coverage separately. When they buy a sponsored article for this issue, it is this article (give it this title).`,
+      `The article as drafted (Markdown${body.length > MAX_ARTICLE_CONTEXT ? ", truncated" : ""}):\n"""\n${body.slice(0, MAX_ARTICLE_CONTEXT)}\n"""`,
+    );
+  } else if (sale.article) {
+    lines.push(`They have since signed up the article "${sale.article.title}" as a paid ${sale.article.styleName ?? "sponsored feature"}; do not sell it again.`);
+  }
   if (sale.items.length) {
     lines.push(
       `Already purchased in this conversation (include these in items on any further purchase): ${sale.items
@@ -634,9 +682,48 @@ async function createPurchasedDrafts(sale: LoadedSale, items: PricedSaleItem[], 
   const total = fresh.reduce((sum, item) => sum + item.priceCents, 0);
   log.push(step("success", `Business purchased ${describeOffer(fresh, fresh[0].discountPercent)} — agreement and invoice to be sent by the publication team`));
 
+  // On an article campaign, the first sponsored article bought becomes that article's paid style.
+  let campaignArticle = sale.article && !sale.article.promotionPackageId ? sale.article : null;
+
   let created = 0;
   for (const item of fresh) {
     try {
+      if (item.package.kind === PromotionPackageKind.ARTICLE && campaignArticle) {
+        const target = campaignArticle;
+        campaignArticle = null;
+        const applied = await prisma.$transaction(async (tx) => {
+          const claimed = await tx.article.updateMany({
+            where: { id: target.id, promotionPackageId: null, saleItem: { is: null } },
+            data: { promotionPackageId: item.package.id, styleName: item.package.name, costCents: item.priceCents },
+          });
+          if (!claimed.count) return false;
+          await tx.articleIssue.upsert({
+            where: { articleId_issueId: { articleId: target.id, issueId: item.issue.id } },
+            create: { articleId: target.id, issueId: item.issue.id },
+            update: {},
+          });
+          await tx.promotionSaleItem.create({
+            data: {
+              saleId: sale.id,
+              kind: item.package.kind,
+              packageId: item.package.id,
+              packageName: item.package.name,
+              issueId: item.issue.id,
+              listPriceCents: item.listPriceCents,
+              discountPercent: item.discountPercent,
+              priceCents: item.priceCents,
+              articleId: target.id,
+            },
+          });
+          return true;
+        });
+        if (applied) {
+          log.push(step("success", `Article "${target.title}" signed up as ${item.package.name} in ${item.issue.name}, price ${formatCents(item.priceCents)} — /articles/${target.id}`));
+          created += 1;
+          continue;
+        }
+        log.push(step("info", `Article "${target.title}" already has a paid style — creating a separate draft for ${item.package.name}`));
+      }
       const itemData = {
         saleId: sale.id,
         kind: item.package.kind,
@@ -678,6 +765,9 @@ async function createPurchasedDrafts(sale: LoadedSale, items: PricedSaleItem[], 
               status: ArticleStatus.DRAFT,
               businessId: sale.business.id,
               createdByUserId: sale.createdByUserId,
+              promotionPackageId: item.package.id,
+              styleName: item.package.name,
+              costCents: item.priceCents,
               issues: { create: [{ issueId: item.issue.id }] },
             },
             select: { id: true },

@@ -57,7 +57,7 @@ export default async function ArticlesPage({
         updatedAt: true,
         sourceSubmission: { select: { id: true } },
         issues: { select: { issue: { select: { name: true, publication: { select: { name: true } } } } } },
-        _count: { select: { images: true, placements: true } },
+        _count: { select: { images: true } },
       },
     }),
     prisma.article.count({ where }),
@@ -90,7 +90,7 @@ export default async function ArticlesPage({
           >
           <div className="table-wrap">
             <table>
-              <thead><tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Article</th><th>Issues</th><th>Status</th><th>Images</th><th>Issue placements</th><th>Updated</th></tr></thead>
+              <thead><tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Article</th><th>Issues</th><th>Status</th><th>Images</th><th>Updated</th></tr></thead>
               <tbody>
                 {articles.map((article) => (
                   <tr key={article.id}>
@@ -102,7 +102,6 @@ export default async function ArticlesPage({
                     <td>{article.issues.map(({ issue }) => `${issue.publication.name} · ${issue.name}`).join(", ") || "—"}</td>
                     <td><span className="status-pill">{formatStatus(article.status)}</span></td>
                     <td>{article._count.images}</td>
-                    <td>{article._count.placements}</td>
                     <td>{article.updatedAt.toLocaleDateString()}</td>
 </tr>
                 ))}
@@ -122,5 +121,5 @@ export default async function ArticlesPage({
 }
 
 function formatStatus(status: string) {
-  return status.toLowerCase();
+  return status.toLowerCase().replace("_", " ");
 }

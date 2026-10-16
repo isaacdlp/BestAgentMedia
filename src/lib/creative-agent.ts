@@ -213,6 +213,9 @@ export async function launchEnhanceImage({
   return launchAgentTask({
     agentId,
     label: `Image enhancement — ${imageType} · ${originalFileName}`,
+    ...(imageType === "submission" || imageType === "article" || imageType === "ad"
+      ? { subject: { type: imageType, id: parentId } }
+      : {}),
     triggeredById,
     steps,
     work: async ({ log }) => {
@@ -498,6 +501,7 @@ export async function launchGenerateAd({
   return launchAgentTask({
     agentId,
     label: `${previous ? "Ad iteration" : "Ad generation"} — ${business.name} · "${ad.title}"`,
+    subject: { type: "ad", id: ad.id },
     triggeredById,
     steps,
     work: async ({ log }) => {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { ImageDropzone } from "@/components/image-dropzone";
+import { SearchSelect } from "@/components/search-select";
 
 type SubmissionImage = {
   id: string;
@@ -15,16 +16,20 @@ type SubmissionImage = {
 type PublicationOption = {
   id: number;
   name: string;
+  zipCodes: string[];
 };
 
 type BusinessOption = {
   id: number;
   name: string;
+  city: string | null;
+  stateCode: string | null;
+  postalCode: string | null;
+  primaryCategory: string | null;
 };
 
 type SubmissionEditorProps = {
   canChangePublication: boolean;
-  canManageStatus: boolean;
   images: SubmissionImage[];
   initialValues: {
     id: string;
@@ -56,7 +61,6 @@ const storyTypes = [
 
 export function SubmissionEditor({
   canChangePublication,
-  canManageStatus,
   images,
   initialValues,
   publications,
@@ -124,6 +128,51 @@ export function SubmissionEditor({
   return (
     <form className="business-form" onSubmit={saveSubmission}>
       <div className="business-form-grid">
+        <div className="business-field-wide submission-link-row">
+          {canChangePublication ? (
+            <SearchSelect
+              initialValue={initialValues.publicationId}
+              label="Publication"
+              name="publicationId"
+              options={publications.map((publication) => ({
+                id: publication.id,
+                label: publication.name,
+                keywords: publication.zipCodes,
+              }))}
+              placeholder="Search by name or ZIP code…"
+              required
+            />
+          ) : (
+            <div className="business-field">
+              <span>Publication *</span>
+              <span className="submission-readonly-value">
+                {publications[0]?.name ?? "Unavailable"}
+              </span>
+              <input
+                defaultValue={initialValues.publicationId}
+                name="publicationId"
+                type="hidden"
+              />
+            </div>
+          )}
+          {businesses.length > 0 ? (
+            <SearchSelect
+              initialValue={initialValues.businessId}
+              label="Associated business"
+              name="businessId"
+              noneLabel="None — search by name, category, city or ZIP…"
+              options={businesses.map((business) => ({
+                id: business.id,
+                label: business.name,
+                detail: [
+                  business.primaryCategory,
+                  [business.city, business.stateCode].filter(Boolean).join(", "),
+                  business.postalCode,
+                ].filter(Boolean).join(" · "),
+              }))}
+            />
+          ) : null}
+        </div>
         <label className="business-field">
           <span>Story title *</span>
           <input
@@ -167,33 +216,6 @@ export function SubmissionEditor({
           />
         </label>
         <label className="business-field">
-          <span>Publication *</span>
-          {canChangePublication ? (
-            <select
-              defaultValue={initialValues.publicationId}
-              name="publicationId"
-              required
-            >
-              {publications.map((publication) => (
-                <option key={publication.id} value={publication.id}>
-                  {publication.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <>
-              <span className="submission-readonly-value">
-                {publications[0]?.name ?? "Unavailable"}
-              </span>
-              <input
-                defaultValue={initialValues.publicationId}
-                name="publicationId"
-                type="hidden"
-              />
-            </>
-          )}
-        </label>
-        <label className="business-field">
           <span>Submitter name *</span>
           <input
             defaultValue={initialValues.submitterName}
@@ -221,29 +243,6 @@ export function SubmissionEditor({
             type="tel"
           />
         </label>
-        {canManageStatus ? (
-          <label className="business-field">
-            <span>Review status</span>
-            <select defaultValue={initialValues.status} name="status">
-              <option value="NEW">New</option>
-              <option value="IN_REVIEW">In review</option>
-              <option value="NEEDS_INFORMATION">Needs information</option>
-              <option value="ACCEPTED">Accepted</option>
-              <option value="DECLINED">Declined</option>
-            </select>
-          </label>
-        ) : null}
-        {canManageStatus && businesses.length > 0 ? (
-          <label className="business-field">
-            <span>Associated business</span>
-            <select defaultValue={initialValues.businessId ?? ""} name="businessId">
-              <option value="">None</option>
-              {businesses.map((business) => (
-                <option key={business.id} value={business.id}>{business.name}</option>
-              ))}
-            </select>
-          </label>
-        ) : null}
         <div className="business-field business-field-wide">
           <span>Story images</span>
           <p className="muted">

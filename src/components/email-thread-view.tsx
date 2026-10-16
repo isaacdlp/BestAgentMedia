@@ -141,10 +141,16 @@ const THREAD_SORT_OPTIONS = [
   { label: "Recipient", value: "toEmail" },
 ];
 
-export function EmailThreadList({ subAgentId }: { subAgentId: number }) {
+export function EmailThreadList({
+  subAgentId,
+  initialThreadId = null,
+}: {
+  subAgentId: number;
+  initialThreadId?: string | null;
+}) {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [total, setTotal] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialThreadId);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("updatedAt");

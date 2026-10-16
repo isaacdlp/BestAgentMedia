@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "ArticleStatus" ADD VALUE 'IN_REVIEW' AFTER 'DRAFT';

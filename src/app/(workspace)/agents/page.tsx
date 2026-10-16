@@ -32,12 +32,10 @@ export default async function AgentsPage({
       }
     : {};
 
-  const [agents, total] = await Promise.all([
+  const [allAgents, total] = await Promise.all([
     prisma.agent.findMany({
       where,
       orderBy: [{ [sort || "name"]: order }],
-      skip,
-      take: limit,
       select: {
         id: true,
         name: true,
@@ -55,6 +53,18 @@ export default async function AgentsPage({
     }),
     prisma.agent.count({ where }),
   ]);
+
+  // Name order lists Marketer directly after Assistant; the agent set is small, so page in memory.
+  const ordered = [...allAgents];
+  if ((sort || "name") === "name") {
+    const marketerIndex = ordered.findIndex((agent) => agent.slug === "marketer");
+    if (marketerIndex >= 0 && ordered.some((agent) => agent.slug === "assistant")) {
+      const [marketer] = ordered.splice(marketerIndex, 1);
+      const target = ordered.findIndex((agent) => agent.slug === "assistant");
+      ordered.splice(order === "desc" ? target : target + 1, 0, marketer);
+    }
+  }
+  const agents = ordered.slice(skip, skip + limit);
 
   return (
     <>

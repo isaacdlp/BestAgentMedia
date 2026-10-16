@@ -12,13 +12,13 @@ import { PromoteForm, type PromoteIssueOption } from "./promote-form";
 export default async function NewPromotionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ business?: string }>;
+  searchParams: Promise<{ business?: string; issue?: string }>;
 }) {
   const user = await requireUser();
   if (user.role !== UserRole.ADMIN) redirect("/businesses");
 
   // Opened from a business page: only issues of publications serving its ZIP code, business preselected.
-  const { business: businessParam } = await searchParams;
+  const { business: businessParam, issue: issueParam } = await searchParams;
   const business =
     businessParam && /^[1-9]\d*$/.test(businessParam)
       ? await prisma.business.findUnique({
@@ -75,6 +75,7 @@ export default async function NewPromotionPage({
         maxDiscountPercent={maxDiscount}
         maxInstructions={MAX_PROMOTION_INSTRUCTIONS}
         preselectedBusinessId={business?.id ?? null}
+        preselectedIssueId={issueParam && /^[w-]{1,64}$/.test(issueParam) ? issueParam : null}
       />
     </>
   );

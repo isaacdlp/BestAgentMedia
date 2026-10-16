@@ -30,9 +30,26 @@ export default async function BusinessesPage({
   const sp = await searchParams;
   const { page, limit, skip, q, sort, order } = parseListParams(sp, "name", "asc");
 
+  const publicationIdParam = Number(Array.isArray(sp.publicationId) ? sp.publicationId[0] : sp.publicationId);
+  const publicationId = Number.isInteger(publicationIdParam) && publicationIdParam > 0 ? publicationIdParam : null;
+  const filteredPublication = publicationId
+    ? await prisma.publication.findUnique({
+        where: { id: publicationId },
+        select: { name: true, zipCodes: { select: { code: true } } },
+      })
+    : null;
+  const scopedWhere = filteredPublication
+    ? {
+        AND: [
+          baseWhere,
+          { postalCode: { in: filteredPublication.zipCodes.map(({ code }) => code) } },
+        ],
+      }
+    : baseWhere;
+
   const where = q
     ? {
-        ...baseWhere,
+        ...scopedWhere,
         OR: [
           { name: { contains: q, mode: "insensitive" as const } },
           { primaryCategory: { contains: q, mode: "insensitive" as const } },
@@ -42,7 +59,7 @@ export default async function BusinessesPage({
           { stateCode: { contains: q, mode: "insensitive" as const } },
         ],
       }
-    : baseWhere;
+    : scopedWhere;
 
   const orderBy =
     sort === "city"
@@ -80,7 +97,12 @@ export default async function BusinessesPage({
         <div>
           <p className="eyebrow">BUSINESS DEVELOPMENT</p>
           <h1>Businesses</h1>
-          <p className="muted">Businesses identified as potential local advertisers.</p>
+          <p className="muted">
+            {filteredPublication
+              ? `Businesses in the ZIP codes covered by ${filteredPublication.name}.`
+              : "Businesses identified as potential local advertisers."}
+            {filteredPublication ? <> <Link className="text-link" href="/businesses">Show all</Link></> : null}
+          </p>
         </div>
         <div className="page-heading-actions">
           <span className="role-pill">{total} businesses</span>

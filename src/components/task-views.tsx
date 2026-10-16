@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AgentBadge } from "@/components/agent-badge";
 import { announceTaskStarted, type LaunchedTask } from "@/lib/task-events";
 import type { LayoutDesign, LayoutElement, LayoutPage } from "@/lib/issue-design";
+import type { ComposedIssue, ComposedPage, ComposedSlot } from "@/lib/issue-composition";
+import { findIssuePageTemplate, TEMPLATE_REFERENCE_HEIGHT, TEMPLATE_REFERENCE_WIDTH, type TemplateSlot } from "@/lib/issue-templates";
+import { diffWords, type DiffSegment } from "@/lib/text-diff";
 
 // ---------------------------------------------------------------------------
 // Stop / delete controls shared by every task page
@@ -47,7 +50,7 @@ export function TaskControls({
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {canStop ? (
         <button className="button button-secondary" disabled={busy} onClick={() => void run("PATCH")} type="button">
-          Stop task
+          Stop
         </button>
       ) : null}
       {canDelete ? (
@@ -299,8 +302,113 @@ function pageLabel(page: LayoutPage, index: number, count: number) {
   return `Page ${index + 1}`;
 }
 
+// Composed layouts (Designer composition): each page is drawn from its template's slot frames
+// with the composed text, photos and ad artwork.
+export type CompositionSummary = {
+  summary?: string;
+  model?: string;
+  outcome?: "designer" | "repaired" | "fallback";
+  repairs?: string[];
+  warnings?: string[];
+  instructions?: string;
+  articleCount?: number;
+  adCount?: number;
+};
+
+const SERIF_STACK = "Merriweather, 'Source Serif Pro', Georgia, serif";
+
+function ComposedSlotPreview({ slot, content }: { slot: TemplateSlot; content: ComposedSlot | undefined }) {
+  const { x, y, width, height } = slot.frame;
+  const box: CSSProperties = { left: x, top: y, width, height };
+  if (slot.kind === "rect") return <div className="layout-preview-shape" style={{ ...box, background: slot.color }} />;
+  if (!content || content.kind === "omit") return null;
+  if (content.kind === "image") {
+    const isAd = slot.role === "ad" || content.fit === "Contain";
+    if (!content.src) {
+      return <div className={`layout-preview-placeholder${isAd ? " is-ad" : ""}`} style={box}>{isAd ? "AD" : "PHOTO"}</div>;
+    }
+    return (
+      <img
+        alt={content.link?.title ?? ""}
+        className="layout-preview-image"
+        src={content.src}
+        style={{ ...box, objectFit: content.fit === "Contain" ? "contain" : "cover" }}
+      />
+    );
+  }
+  if (slot.kind !== "text") return null;
+  return (
+    <div
+      className="layout-preview-text"
+      style={{
+        ...box,
+        color: slot.color,
+        fontFamily: SERIF_STACK,
+        fontSize: slot.fontSize,
+        fontWeight: slot.bold ? 700 : 400,
+        lineHeight: slot.lineHeight ?? 1.25,
+        textAlign: slot.align === "Justify" ? "justify" : (slot.align.toLowerCase() as "left" | "center" | "right"),
+        display: slot.verticalAlign && slot.verticalAlign !== "Top" ? "flex" : undefined,
+        flexDirection: "column",
+        justifyContent: slot.verticalAlign === "Center" ? "center" : slot.verticalAlign === "Bottom" ? "flex-end" : undefined,
+      }}
+    >
+      {content.text}
+    </div>
+  );
+}
+
+function ComposedPagePreview({ page, scale }: { page: ComposedPage; scale: number }) {
+  const template = findIssuePageTemplate(page.templateId);
+  const content = new Map(page.slots.map((slot) => [slot.slotId, slot]));
+  return (
+    <div
+      className="layout-preview-canvas"
+      style={{
+        width: TEMPLATE_REFERENCE_WIDTH,
+        height: TEMPLATE_REFERENCE_HEIGHT,
+        background: template?.background ?? "#fff",
+        transform: `scale(${scale})`,
+      }}
+    >
+      {template?.slots.map((slot) => <ComposedSlotPreview content={content.get(slot.id)} key={slot.id} slot={slot} />)}
+    </div>
+  );
+}
+
+const COMPOSED_PREVIEW_WIDTH = 260;
+
+function ComposedPages({ composition }: { composition: ComposedIssue }) {
+  const scale = COMPOSED_PREVIEW_WIDTH / TEMPLATE_REFERENCE_WIDTH;
+  const count = composition.pages.length;
+  return (
+    <div className="layout-preview-grid">
+      {composition.pages.map((page, index) => (
+        <figure className="layout-preview-page layout-preview-composed" key={index}>
+          <div className="layout-preview-frame" style={{ width: COMPOSED_PREVIEW_WIDTH, height: TEMPLATE_REFERENCE_HEIGHT * scale }}>
+            <ComposedPagePreview page={page} scale={scale} />
+          </div>
+          <figcaption>
+            {index === 0 ? "Cover" : index === count - 1 ? "Back cover" : `Page ${index + 1}`}
+            <span className="layout-preview-template"> · {findIssuePageTemplate(page.templateId)?.name ?? page.templateId}</span>
+            {page.note ? <span className="layout-preview-note">{page.note}</span> : null}
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+const OUTCOME_LABELS = {
+  designer: "Planned by the Designer",
+  repaired: "Planned by the Designer, completed automatically",
+  fallback: "Laid out automatically",
+} as const;
+
 export function LayoutTaskView({
   design,
+  composition = null,
+  details = {},
   agentId,
   agentTaskId,
   issueId,
@@ -308,6 +416,8 @@ export function LayoutTaskView({
   canApply,
 }: {
   design: LayoutDesign | null;
+  composition?: ComposedIssue | null;
+  details?: CompositionSummary;
   agentId: number;
   agentTaskId: string;
   issueId: string | null;
@@ -343,7 +453,7 @@ export function LayoutTaskView({
         <h2>Generated layout</h2>
         <div className="task-actions task-actions-inline">
           {issueId ? <Link className="text-link" href={`/issues/${issueId}`}>Open {issueName ?? "issue"} →</Link> : null}
-          {canApply && design && issueId ? (
+          {canApply && (design || composition) && issueId ? (
             <button className="button button-primary" disabled={applying} onClick={() => void applyToIssue()} type="button">
               {applying ? "Applying…" : "Apply to issue"}
             </button>
@@ -355,7 +465,36 @@ export function LayoutTaskView({
         editor, where every text and image stays editable.
       </p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
-      {pages.length ? (
+      {composition ? (
+        <>
+          <div className="layout-composition-summary">
+            <p className="layout-composition-meta">
+              <span className="status-pill">{OUTCOME_LABELS[details.outcome ?? "designer"]}</span>
+              <span className="muted">
+                {composition.pages.length} pages · {details.articleCount ?? 0} article(s) · {details.adCount ?? 0} ad(s)
+                {details.model ? ` · ${details.model}` : ""}
+              </span>
+            </p>
+            {details.summary ? <p>{details.summary}</p> : null}
+            {details.instructions ? (
+              <p className="muted"><strong>Custom instructions:</strong> {details.instructions}</p>
+            ) : null}
+            {details.repairs?.length ? (
+              <details className="layout-composition-notes" open>
+                <summary>Automatic corrections ({details.repairs.length})</summary>
+                <ul>{details.repairs.map((item) => <li key={item}>{item}</li>)}</ul>
+              </details>
+            ) : null}
+            {details.warnings?.length ? (
+              <details className="layout-composition-notes">
+                <summary>Check before printing ({details.warnings.length})</summary>
+                <ul>{details.warnings.map((item) => <li key={item}>{item}</li>)}</ul>
+              </details>
+            ) : null}
+          </div>
+          <ComposedPages composition={composition} />
+        </>
+      ) : pages.length ? (
         <div className="layout-preview-grid">
           {pages.map((page, index) => (
             <figure className="layout-preview-page" key={page.id ?? index}>
@@ -390,49 +529,16 @@ export function LayoutTaskView({
 // ---------------------------------------------------------------------------
 
 export function EmailDraftView({
-  agentId,
-  agentTaskId,
   draft,
-  subAgents,
-  canSend,
   recordHref,
   recordLabel,
   threadHref,
 }: {
-  agentId: number;
-  agentTaskId: string;
   draft: { kind: string | null; to: string; subject: string; body: string; sent: boolean; sentTo: string | null };
-  subAgents: { id: number; name: string }[];
-  canSend: boolean;
   recordHref: string | null;
   recordLabel: string;
   threadHref: string | null;
 }) {
-  const router = useRouter();
-  const [subAgentId, setSubAgentId] = useState(subAgents[0]?.id ?? 0);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
-
-  async function send() {
-    if (!subAgentId) return;
-    setSending(true);
-    setError("");
-    try {
-      const response = await fetch(`/api/agents/${agentId}/tasks/${agentTaskId}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subAgentId }),
-      });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "The email could not be sent.");
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "The email could not be sent.");
-    } finally {
-      setSending(false);
-    }
-  }
-
   return (
     <section className="panel task-section">
       <div className="panel-heading">
@@ -442,7 +548,7 @@ export function EmailDraftView({
       <p className="muted task-review-status">
         {draft.sent
           ? `Sent${draft.sentTo ? ` to ${draft.sentTo}` : ""}.`
-          : "Draft — nothing has been sent. Review it before sending."}
+          : "Draft — not sent."}
       </p>
       <dl className="task-email-meta">
         <dt>To</dt>
@@ -451,30 +557,147 @@ export function EmailDraftView({
         <dd>{draft.subject}</dd>
       </dl>
       <pre className="task-email-body">{draft.body}</pre>
-      {error ? <p className="form-error" role="alert">{error}</p> : null}
-      {draft.sent ? (
-        threadHref ? <Link className="text-link" href={threadHref}>View conversation →</Link> : null
-      ) : canSend ? (
-        subAgents.length ? (
-          <div className="task-actions">
-            <label className="task-send-from">
-              <span className="muted">Send as</span>
-              <select onChange={(event) => setSubAgentId(Number(event.target.value))} value={subAgentId}>
-                {subAgents.map((subAgent) => (
-                  <option key={subAgent.id} value={subAgent.id}>{subAgent.name}</option>
-                ))}
-              </select>
-            </label>
-            <button className="button button-primary" disabled={sending || !subAgentId} onClick={() => void send()} type="button">
-              {sending ? "Sending…" : "Send email"}
-            </button>
-          </div>
+      {draft.sent && threadHref ? <Link className="text-link" href={threadHref}>View conversation →</Link> : null}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Copywriter revision of a submission or article (side-by-side approval)
+// ---------------------------------------------------------------------------
+
+export type RevisionReviewStatus = "pending_review" | "accepted" | "discarded";
+export type RevisionTarget = "submission" | "article";
+
+function revisionStatusText(status: RevisionReviewStatus, target: RevisionTarget) {
+  switch (status) {
+    case "pending_review":
+      return `Waiting for your approval — the ${target} has not been changed yet.`;
+    case "accepted":
+      return `Accepted — the ${target}'s title and body were replaced with the revision.`;
+    default:
+      return `Discarded — the ${target} was left unchanged.`;
+  }
+}
+
+/** Where a revision is opened and resolved for each kind of record. */
+const REVISION_PATHS: Record<RevisionTarget, { page: string; api: (id: string, taskId: string) => string }> = {
+  submission: { page: "/submissions", api: (id, taskId) => `/api/submissions/${id}/apply/${taskId}` },
+  article: { page: "/articles", api: (id, taskId) => `/api/articles/${id}/enhance/${taskId}` },
+};
+
+function DiffText({ segments, fallback, kind }: { segments: DiffSegment[] | null; fallback: string; kind: "removed" | "added" }) {
+  if (!segments) return <>{fallback}</>;
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.changed ? (
+          kind === "removed" ? <del key={index}>{segment.text}</del> : <ins key={index}>{segment.text}</ins>
         ) : (
-          <p className="muted">Add a sub agent with email settings to this agent before sending.</p>
-        )
-      ) : (
-        <p className="muted">An administrator can send this draft.</p>
+          <span key={index}>{segment.text}</span>
+        ),
       )}
+    </>
+  );
+}
+
+export function RevisionView({
+  target,
+  recordId,
+  agentTaskId,
+  status,
+  previous,
+  proposed,
+  editedSince,
+  canAct,
+}: {
+  target: RevisionTarget;
+  /** ID of the submission or article the revision is for. */
+  recordId: string;
+  agentTaskId: string;
+  status: RevisionReviewStatus;
+  /** The record as it was when the revision was drafted. */
+  previous: { title: string; body: string };
+  proposed: { title: string; body: string };
+  /** The record changed after the revision was drafted (only meaningful while pending). */
+  editedSince: boolean;
+  canAct: boolean;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const titleDiff = useMemo(() => diffWords(previous.title, proposed.title), [previous.title, proposed.title]);
+  const bodyDiff = useMemo(() => diffWords(previous.body, proposed.body), [previous.body, proposed.body]);
+  const pending = status === "pending_review";
+
+  async function resolve(action: "accept" | "discard") {
+    if (action === "accept" && editedSince && !window.confirm(
+      `The ${target} was edited after this revision was drafted. Accepting replaces those edits with the revision. Continue?`,
+    )) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(REVISION_PATHS[target].api(recordId, agentTaskId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, force: action === "accept" && editedSince }),
+      });
+      const data = (await response.json()) as { error?: string; code?: string };
+      if (!response.ok) {
+        if (data.code === "edited-since") router.refresh();
+        throw new Error(data.error ?? "The revision could not be updated.");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The revision could not be updated.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel task-section">
+      <div className="panel-heading">
+        <h2>Proposed revision</h2>
+        <Link className="text-link" href={`${REVISION_PATHS[target].page}/${recordId}`}>Open {target} →</Link>
+      </div>
+      <p className="muted task-review-status">{revisionStatusText(status, target)}</p>
+      {pending && editedSince ? (
+        <p className="form-error" role="status">
+          The {target} was edited after this revision was drafted.
+          The left column shows the version the Copywriter worked from; accepting replaces the current text.
+        </p>
+      ) : null}
+
+      <div className="task-text-compare">
+        <article>
+          <p className="task-text-compare-label">{status === "accepted" ? "Previous version" : "Current version"}</p>
+          <h3><DiffText fallback={previous.title} kind="removed" segments={titleDiff?.before ?? null} /></h3>
+          <div className="task-text-compare-body">
+            <DiffText fallback={previous.body} kind="removed" segments={bodyDiff?.before ?? null} />
+          </div>
+        </article>
+        <article className="task-text-compare-new">
+          <p className="task-text-compare-label">{status === "accepted" ? "Applied revision" : "Proposed revision"}</p>
+          <h3><DiffText fallback={proposed.title} kind="added" segments={titleDiff?.after ?? null} /></h3>
+          <div className="task-text-compare-body">
+            <DiffText fallback={proposed.body} kind="added" segments={bodyDiff?.after ?? null} />
+          </div>
+        </article>
+      </div>
+
+      {error ? <p className="form-error" role="alert">{error}</p> : null}
+
+      {canAct && pending ? (
+        <div className="task-actions">
+          <button className="button button-secondary button-danger" disabled={busy} onClick={() => void resolve("discard")} type="button">
+            Discard
+          </button>
+          <button className="button button-primary" disabled={busy} onClick={() => void resolve("accept")} type="button">
+            {busy ? "Saving…" : `Accept & overwrite ${target}`}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

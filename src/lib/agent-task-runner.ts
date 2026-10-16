@@ -20,14 +20,18 @@ export type AgentTaskContext = {
  * Launches an agent job as a background Task: records a RUNNING AgentTask, schedules `work`
  * to run after the response is sent, and returns the registry task for the caller to return.
  * `work` returns the task result; throwing marks the task FAILED with the error message.
- * A task stopped by a user while running keeps its STOPPED status.
+ * A task stopped by a user while running keeps its STOPPED status. With `keepRunning`, a
+ * successful `work` saves its result but leaves the task RUNNING (Ongoing) for a conversation
+ * that other code finishes later.
  */
 export async function launchAgentTask({
   agentId,
   label,
   triggeredById,
   issueId,
+  subject,
   steps: initialSteps = [],
+  keepRunning = false,
   work,
 }: {
   /** Null for work that does not belong to any agent. */
@@ -35,7 +39,10 @@ export async function launchAgentTask({
   label: string;
   triggeredById?: string | null;
   issueId?: string | null;
+  /** The record the task works on; the task is stopped when that record is accepted. */
+  subject?: { type: "submission" | "article" | "ad"; id: string };
   steps?: TaskStep[];
+  keepRunning?: boolean;
   work: (context: AgentTaskContext) => Promise<unknown>;
 }): Promise<RegistryTaskRef> {
   const steps = [...initialSteps];
@@ -45,6 +52,8 @@ export async function launchAgentTask({
       status: AgentTaskStatus.RUNNING,
       label,
       issueId: issueId ?? null,
+      subjectType: subject?.type ?? null,
+      subjectId: subject?.id ?? null,
       triggeredById: triggeredById ?? null,
       startedAt: new Date(),
       steps: steps as unknown as Prisma.InputJsonValue,
@@ -52,7 +61,7 @@ export async function launchAgentTask({
     select: { id: true },
   });
 
-  after(() => executeAgentTask(agentTask.id, steps, work));
+  after(() => executeAgentTask(agentTask.id, steps, work, keepRunning));
 
   return getRegistryTask({ agentTaskId: agentTask.id });
 }
@@ -61,6 +70,7 @@ async function executeAgentTask(
   agentTaskId: string,
   steps: TaskStep[],
   work: (context: AgentTaskContext) => Promise<unknown>,
+  keepRunning: boolean,
 ) {
   const whileRunning = { id: agentTaskId, status: AgentTaskStatus.RUNNING };
 
@@ -76,8 +86,7 @@ async function executeAgentTask(
     await prisma.agentTask.updateMany({
       where: whileRunning,
       data: {
-        status: AgentTaskStatus.SUCCEEDED,
-        completedAt: new Date(),
+        ...(keepRunning ? {} : { status: AgentTaskStatus.SUCCEEDED, completedAt: new Date() }),
         steps: steps as unknown as Prisma.InputJsonValue,
         ...(result === undefined ? {} : { result: result as Prisma.InputJsonValue }),
       },

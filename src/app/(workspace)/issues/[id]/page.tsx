@@ -1,7 +1,7 @@
 import { UserRole } from "@prisma/client";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { updateIssueDetails } from "@/app/actions/content";
+import { updateIssueDetails, updateIssueStatus } from "@/app/actions/content";
 import { IssuePageEditor } from "@/components/issue-page-editor-loader";
 import { getArticleScope, getIssueScope } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
@@ -52,7 +52,7 @@ export default async function IssueDetailPage({
         body: true,
         images: {
           orderBy: { position: "asc" },
-          select: { id: true, caption: true },
+          select: { id: true },
         },
       },
     }),
@@ -88,39 +88,37 @@ export default async function IssueDetailPage({
           {issue.description ? <p className="muted">{issue.description}</p> : null}
           <p className="muted">Publication date: {issue.publicationDate.toISOString().slice(0, 10)}</p>
         </div>
-        {canManage ? (
-          <form action={updateIssueDetails} className="inline-edit issue-detail-form">
-            <input name="id" type="hidden" value={issue.id} />
-            <label>
-              <span>Name</span>
-              <input defaultValue={issue.name} name="name" required type="text" />
-            </label>
-            <label>
-              <span>Slug</span>
-              <input defaultValue={issue.slug} name="slug" pattern="[a-z0-9]+(-[a-z0-9]+)*" required type="text" />
-            </label>
-            <label>
-              <span>Description</span>
-              <textarea defaultValue={issue.description ?? ""} name="description" rows={2} />
-            </label>
-            <label>
-              <span>Publication date</span>
-              <input
-                defaultValue={issue.publicationDate.toISOString().slice(0, 10)}
-                name="publicationDate"
-                required
-                type="date"
-              />
-            </label>
-            <select aria-label="Issue status" defaultValue={issue.status} name="status">
-              <option value="DRAFT">Draft</option>
-              <option value="ACCEPTED">Accepted</option>
-              <option value="PUBLISHED">Published</option>
-            </select>
-            <button className="button button-small" type="submit">Save details</button>
-          </form>
+        {user.role === UserRole.ADMIN ? (
+          <div className="page-heading-actions">
+            <Link className="button button-primary" href={`/businesses/promote/new?issue=${encodeURIComponent(issue.id)}`}>
+              Promote
+            </Link>
+          </div>
         ) : null}
       </div>
+      {canManage ? (
+        <section className="panel">
+          <form action={updateIssueStatus} className="business-form" style={{ padding: "0.5rem 1rem" }}>
+            <input name="id" type="hidden" value={issue.id} />
+            <div className="review-status">
+              <div aria-label="Issue status" className="review-status-options" role="radiogroup">
+                {[
+                  ["DRAFT", "Draft"],
+                  ["IN_REVIEW", "In review"],
+                  ["ACCEPTED", "Accepted"],
+                  ["PUBLISHED", "Published"],
+                ].map(([value, label]) => (
+                  <label className={`review-status-option review-status-${value.toLowerCase()}`} key={value}>
+                    <input defaultChecked={issue.status === value} name="status" type="radio" value={value} />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              <button className="button button-small" type="submit">Update status</button>
+            </div>
+          </form>
+        </section>
+      ) : null}
       {canManage ? (
         <IssuePageEditor
           advertisements={advertisements.map((ad) => ({
@@ -138,9 +136,12 @@ export default async function IssueDetailPage({
             imageUrl: article.images[0]
               ? `/api/articles/${article.id}/images/${article.images[0].id}`
               : undefined,
+            imageUrls: article.images.map((image) => `/api/articles/${article.id}/images/${image.id}`),
           }))}
           design={design}
           issueId={issue.id}
+          publicationDate={issue.publicationDate.toISOString()}
+          publicationName={issue.publication.name}
           pages={issue.pages.map(({ id: pageId, pageNumber, type }) => ({
             id: pageId,
             pageNumber,
@@ -155,6 +156,43 @@ export default async function IssueDetailPage({
           </p>
         </section>
       )}
+      {canManage ? (
+        <section className="panel" style={{ marginTop: "2rem" }}>
+          <div className="panel-heading">
+            <h2>Issue details</h2>
+          </div>
+          <form action={updateIssueDetails} className="business-form">
+            <input name="id" type="hidden" value={issue.id} />
+            <div className="business-form-grid">
+              <label className="business-field business-field-wide">
+                <span>Name <span aria-hidden="true">*</span></span>
+                <input defaultValue={issue.name} name="name" required type="text" />
+              </label>
+              <label className="business-field">
+                <span>Slug <span aria-hidden="true">*</span></span>
+                <input defaultValue={issue.slug} name="slug" pattern="[a-z0-9]+(-[a-z0-9]+)*" required type="text" />
+              </label>
+              <label className="business-field">
+                <span>Publication date <span aria-hidden="true">*</span></span>
+                <input
+                  defaultValue={issue.publicationDate.toISOString().slice(0, 10)}
+                  name="publicationDate"
+                  required
+                  type="date"
+                />
+              </label>
+              <label className="business-field business-field-wide">
+                <span>Description</span>
+                <textarea defaultValue={issue.description ?? ""} name="description" rows={3} />
+              </label>
+            </div>
+            <div className="business-form-footer">
+              <p className="muted">Record ID: {issue.id}</p>
+              <button className="button button-primary" type="submit">Save changes</button>
+            </div>
+          </form>
+        </section>
+      ) : null}
     </div>
   );
 }

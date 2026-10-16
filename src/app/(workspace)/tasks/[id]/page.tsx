@@ -6,11 +6,21 @@ import { TaskResultSummary, TaskStepLog, type TaskResult, type TaskStep } from "
 import { PromotionDealDetails } from "@/components/promotion-deal-panel";
 import { PromotionSaleDetails } from "@/components/promotion-sale-panel";
 import { TaskAutoRefresh } from "@/components/task-auto-refresh";
-import { CreativeTaskView, EmailDraftView, LayoutTaskView, TaskControls, type CreativeFollowUp } from "@/components/task-views";
+import {
+  CreativeTaskView,
+  EmailDraftView,
+  LayoutTaskView,
+  RevisionView,
+  TaskControls,
+  type CompositionSummary,
+  type CreativeFollowUp,
+} from "@/components/task-views";
+import { getArticleScope, getSubmissionScope } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import type { CreativeTaskResult } from "@/lib/creative-agent";
 import { prisma } from "@/lib/db";
 import type { LayoutDesign } from "@/lib/issue-design";
+import { isComposedIssue } from "@/lib/issue-composition";
 import { getPromotionDealByTask } from "@/lib/promotion-deals";
 import { getPromotionSaleByTask } from "@/lib/promotion-sales";
 import { formatTaskDuration, isTaskActive, TASK_STATUS_LABELS } from "@/lib/task-status";
@@ -23,6 +33,7 @@ const TEMPLATE_EYEBROWS = {
   creative: "CREATIVE",
   "email-draft": "EMAIL DRAFT",
   review: "EDITORIAL REVIEW",
+  revision: "COPYWRITER REVISION",
   promotion: "ADVERTISER REVIEW & PROMOTION",
   sale: "PAID PROMOTION SALE",
   generic: "AGENT TASK",
@@ -101,9 +112,11 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
           </p>
         </div>
         <div className="page-heading-actions">
-          <span className={`agent-task-status-chip task-status-large agent-task-status-${task.status.toLowerCase()}`}>
-            {TASK_STATUS_LABELS[task.status]}
-          </span>
+          <div className="page-heading-status">
+            <span className={`agent-task-status-chip task-status-large agent-task-status-${task.status.toLowerCase()}`}>
+              {TASK_STATUS_LABELS[task.status]}
+            </span>
+          </div>
           <TaskControls canDelete={isAdmin} canStop={active} taskId={task.id} />
         </div>
       </div>
@@ -116,7 +129,9 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
               ? "The Marketer is handling this conversation and answers the advertiser's replies automatically. You will be notified when they sign up or decline."
               : template === "sale"
                 ? "The Marketer is selling to this business and answers its replies automatically. When the business buys, the purchased ads and articles are created as drafts and you are notified."
-                : "This task is running in the background. You can leave this page — you will be notified when it finishes."}
+                : (result as Record<string, unknown> | null)?.contentType === "clarification"
+                  ? "The Assistant is managing this conversation with the submitter: it answers their replies, records what they send on the review (photos go to the submission; the story text is left to the Copywriter), and follows up if they go quiet, until nothing is missing."
+                  : "This task is running in the background. You can leave this page — you will be notified when it finishes."}
           </span>
         </div>
       ) : null}
@@ -174,7 +189,7 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
           {task.reachoutTask.subAgent && task.reachoutTask.threadId && isAdmin ? (
             <Link
               className="text-link"
-              href={`/agents/${task.reachoutTask.subAgent.agentId}/sub-agents/${task.reachoutTask.subAgent.id}`}
+              href={`/agents/${task.reachoutTask.subAgent.agentId}/sub-agents/${task.reachoutTask.subAgent.id}?thread=${encodeURIComponent(task.reachoutTask.threadId)}`}
             >
               View conversation ({task.reachoutTask.thread?._count.messages ?? 0} messages) →
             </Link>
@@ -188,7 +203,9 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
             agentId={task.agent.id}
             agentTaskId={task.agentTask.id}
             canApply={canManageContent}
+            composition={isComposedIssue((result as { composition?: unknown } | null)?.composition) ? (result as { composition: never }).composition : null}
             design={((result as { design?: LayoutDesign } | null)?.design) ?? null}
+            details={(result ?? {}) as CompositionSummary}
             issueId={task.agentTask.issue?.id ?? null}
             issueName={task.agentTask.issue?.name ?? null}
           />
@@ -202,7 +219,6 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
       {template === "email-draft" && task.agentTask && task.agent && result ? (
         <EmailSection
           agentId={task.agent.id}
-          agentTaskId={task.agentTask.id}
           canSend={isAdmin}
           result={result as Record<string, unknown>}
           subAgentId={task.agentTask.subAgentId}
@@ -220,6 +236,15 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
           </p>
           <TaskResultSummary agentId={task.agent.id} result={result as TaskResult} />
         </section>
+      ) : null}
+
+      {template === "revision" && task.agentTask && task.status === "SUCCEEDED" && result ? (
+        <RevisionSection
+          agentTaskId={task.agentTask.id}
+          canAct={canManageContent}
+          result={result as Record<string, unknown>}
+          user={user}
+        />
       ) : null}
 
       {template === "promotion" && promotionDeal ? (
@@ -251,6 +276,112 @@ export default async function TaskPage({ params }: { params: Promise<{ id: strin
           <TaskStepLog steps={steps} />
         </section>
       ) : null}
+    </>
+  );
+}
+
+async function RevisionSection({
+  agentTaskId,
+  result,
+  user,
+  canAct,
+}: {
+  agentTaskId: string;
+  result: Record<string, unknown>;
+  user: Awaited<ReturnType<typeof requireUser>>;
+  canAct: boolean;
+}) {
+  const list = (value: unknown) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+  const text = (value: unknown) => (typeof value === "string" ? value : "");
+  const changes = list(result.changes);
+  const unresolved = list(result.unresolved);
+  const replyCount = list(result.replyMessageIds).length;
+  const recordId = text(result.referenceId);
+  const target = result.contentType === "article-revision" ? "article" : "submission";
+  const status =
+    result.status === "pending_review" || result.status === "accepted" || result.status === "discarded"
+      ? result.status
+      : null;
+  // Revisions drafted before approvals were required were written straight to the submission
+  const legacy = !status || !text(result.proposedBody);
+  const enhanced = target === "article" || result.reviewTaskId === null;
+
+  let editedSince = false;
+  if (status === "pending_review" && recordId) {
+    let current: { title: string; body: string } | null = null;
+    if (target === "article") {
+      current = await prisma.article.findFirst({ where: { id: recordId, ...(await getArticleScope(user)) }, select: { title: true, body: true } });
+    } else {
+      const scope = await getSubmissionScope(user);
+      current = scope
+        ? await prisma.contentSubmission.findFirst({ where: { id: recordId, ...scope }, select: { title: true, body: true } })
+        : null;
+    }
+    editedSince = Boolean(current && (current.title !== result.previousTitle || current.body !== result.previousBody));
+  }
+
+  return (
+    <>
+    {!legacy && status ? (
+      <RevisionView
+        agentTaskId={agentTaskId}
+        canAct={canAct}
+        editedSince={editedSince}
+        previous={{ title: text(result.previousTitle), body: text(result.previousBody) }}
+        proposed={{ title: text(result.proposedTitle), body: text(result.proposedBody) }}
+        recordId={recordId}
+        status={status}
+        target={target}
+      />
+    ) : null}
+    <section className="panel task-section">
+      <div className="panel-heading">
+        <h2>{legacy ? "Applied revision" : "What the Copywriter changed"}</h2>
+        {legacy && recordId ? (
+          <Link className="text-link" href={`/submissions/${recordId}`}>Open submission →</Link>
+        ) : null}
+      </div>
+      <p className="muted task-review-status">
+        {target === "article"
+          ? `The Copywriter enhanced the article for print${typeof result.targetPages === "number" ? `, aiming for ${result.targetPages} page${result.targetPages === 1 ? "" : "s"} (about ${result.targetWords} words; the draft has ${result.wordCount})` : ""}.`
+          : enhanced
+            ? "The Copywriter enhanced the submission from its own text."
+            : <>
+                The Copywriter {legacy ? "rewrote" : "drafted this revision of"} the submission from the editorial review
+                {replyCount ? ` and ${replyCount} reply message${replyCount === 1 ? "" : "s"} from the submitter` : ""}.
+                {legacy ? " The previous version is kept below." : ""}
+              </>}
+      </p>
+      {typeof result.instructions === "string" && result.instructions ? (
+        <div className="submission-review-section">
+          <p className="submission-review-section-label">Custom instructions</p>
+          <p style={{ whiteSpace: "pre-wrap" }}>{result.instructions}</p>
+        </div>
+      ) : null}
+      {changes.length ? (
+        <div className="submission-review-section">
+          <p className="submission-review-section-label">Changes made</p>
+          <ul className="submission-review-list submission-review-list-strengths">
+            {changes.map((change, index) => <li key={index}>{change}</li>)}
+          </ul>
+        </div>
+      ) : null}
+      {unresolved.length ? (
+        <div className="submission-review-section">
+          <p className="submission-review-section-label">Still unresolved</p>
+          <ul className="submission-review-list submission-review-list-missing">
+            {unresolved.map((item, index) => <li key={index}>{item}</li>)}
+          </ul>
+        </div>
+      ) : null}
+      {legacy && typeof result.previousBody === "string" ? (
+        <details className="submission-review-section">
+          <summary>Previous version</summary>
+          <p><strong>{text(result.previousTitle)}</strong></p>
+          <p style={{ whiteSpace: "pre-wrap" }}>{result.previousBody}</p>
+        </details>
+      ) : null}
+    </section>
     </>
   );
 }
@@ -354,13 +485,11 @@ function CreativeSection({
 
 function EmailSection({
   agentId,
-  agentTaskId,
   result,
   subAgentId,
   canSend,
 }: {
   agentId: number;
-  agentTaskId: string;
   result: Record<string, unknown>;
   subAgentId: number | null;
   canSend: boolean;
@@ -386,10 +515,7 @@ function EmailSection({
       : `/${isBusiness ? "businesses" : "submissions"}/${String(referenceId)}`;
 
   return (
-    <EmailDraftViewLoader
-      agentId={agentId}
-      agentTaskId={agentTaskId}
-      canSend={canSend}
+    <EmailDraftView
       draft={{
         kind,
         to: text(result.emailTo),
@@ -400,19 +526,11 @@ function EmailSection({
       }}
       recordHref={recordHref}
       recordLabel={isBusiness ? "Open business" : "Open submission"}
-      threadHref={subAgentId && canSend ? `/agents/${agentId}/sub-agents/${subAgentId}` : null}
+      threadHref={
+        subAgentId && canSend
+          ? `/agents/${agentId}/sub-agents/${subAgentId}${typeof result.threadId === "string" ? `?thread=${encodeURIComponent(result.threadId)}` : ""}`
+          : null
+      }
     />
   );
-}
-
-async function EmailDraftViewLoader(props: Omit<Parameters<typeof EmailDraftView>[0], "subAgents">) {
-  const subAgents =
-    props.canSend && !props.draft.sent
-      ? await prisma.subAgent.findMany({
-          where: { agentId: props.agentId },
-          orderBy: { createdAt: "asc" },
-          select: { id: true, name: true },
-        })
-      : [];
-  return <EmailDraftView {...props} subAgents={subAgents} />;
 }

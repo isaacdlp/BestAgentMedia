@@ -41,7 +41,7 @@ export async function copyBusinessImagesToAd(businessId: number, advertisementId
   }
 }
 
-/** Copies the business's pictures to a new article as uncaptioned images (up to 5). Returns how many were copied. */
+/** Copies the business's pictures to a new article as images (up to 5). Returns how many were copied. */
 export async function copyBusinessImagesToArticle(businessId: number, articleId: string): Promise<number> {
   let fileNames: string[] = [];
   try {
@@ -49,7 +49,7 @@ export async function copyBusinessImagesToArticle(businessId: number, articleId:
     fileNames = result.fileNames;
     if (!result.copied.length) return 0;
     await prisma.articleImage.createMany({
-      data: result.copied.map((image) => ({ ...image, caption: "", articleId })),
+      data: result.copied.map((image) => ({ ...image, articleId })),
     });
     return result.copied.length;
   } catch {

@@ -33,7 +33,7 @@ export async function GET(
   });
   if (
     !imageRecord ||
-    !/^(?:[\da-f-]{36}|seed-boca-story-\d+-\d+)\.(?:jpg|png|webp)$/i.test(
+    !/^(?:[\da-f-]{36}|seed-metrowest-story-\d+-\d+)\.(?:jpg|png|webp)$/i.test(
       imageRecord.fileName,
     )
   ) {

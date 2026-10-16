@@ -37,14 +37,22 @@ export function PromoteForm({
   maxDiscountPercent,
   maxInstructions,
   preselectedBusinessId,
+  preselectedIssueId = null,
 }: {
   issues: PromoteIssueOption[];
   maxDiscountPercent: number;
   maxInstructions: number;
   preselectedBusinessId: number | null;
+  preselectedIssueId?: string | null;
 }) {
   const router = useRouter();
-  const [issueId, setIssueId] = useState(issues.length === 1 ? issues[0].id : "");
+  const [issueId, setIssueId] = useState(
+    preselectedIssueId && issues.some((item) => item.id === preselectedIssueId)
+      ? preselectedIssueId
+      : issues.length === 1
+        ? issues[0].id
+        : "",
+  );
   const [instructions, setInstructions] = useState("");
   const [businesses, setBusinesses] = useState<BusinessRow[]>([]);
   const [total, setTotal] = useState(0);

@@ -43,6 +43,14 @@ export function PromotionSaleDetails({ sale, showConversationLink }: { sale: Pro
             "issue deleted"
           )}
         </dd>
+        {sale.article ? (
+          <>
+            <dt>Article</dt>
+            <dd>
+              <Link className="text-link" href={`/articles/${sale.article.id}`}>{sale.article.title}</Link>
+            </dd>
+          </>
+        ) : null}
         <dt>Sale</dt>
         <dd>
           <span className={`promotion-pill ${SALE_PILLS[sale.status]}`}>{SALE_LABELS[sale.status]}</span>
@@ -136,7 +144,7 @@ export function PromotionSaleDetails({ sale, showConversationLink }: { sale: Pro
       ) : null}
 
       {showConversationLink && sale.subAgent && sale.threadId ? (
-        <Link className="text-link" href={`/agents/${sale.subAgent.agentId}/sub-agents/${sale.subAgent.id}`}>
+        <Link className="text-link" href={`/agents/${sale.subAgent.agentId}/sub-agents/${sale.subAgent.id}?thread=${encodeURIComponent(sale.threadId)}`}>
           View conversation ({sale.thread?._count.messages ?? 0} messages) →
         </Link>
       ) : null}

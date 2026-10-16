@@ -40,7 +40,7 @@ export function SubmitReviewButton({
 
   return (
     <>
-      <button className="button button-primary" disabled={disabled} onClick={() => setOpen(true)} type="button">
+      <button className="button button-primary submit-review-button" disabled={disabled} onClick={() => setOpen(true)} type="button">
         Submit for Review
       </button>
       {open ? (

@@ -1,62 +1,14 @@
 import "server-only";
 import { ReachoutTaskStatus } from "@prisma/client";
-import { generateAssistantReply } from "@/lib/assistant-reply";
+import { COMPANY_BRIEF, generateAssistantReply, INLINE_REPLY_NOTE, renderTranscript, type ThreadMessage } from "@/lib/assistant-reply";
+import { draftContributorEmail } from "@/lib/contributor-email";
 import { sendSubAgentEmail, getSubAgentConfig } from "@/lib/sub-agent-email";
 import { prisma } from "@/lib/db";
 
 const REMINDER_1_DAYS = 2;
 const REMINDER_2_DAYS = 5;
 const MS_PER_DAY = 86_400_000;
-
-// ---------------------------------------------------------------------------
-// Email templates
-// ---------------------------------------------------------------------------
-
-function interpolate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{(\w+)\}/g, (_, key: string) => vars[key] ?? `{${key}}`);
-}
-
-const INITIAL_SUBJECT = "Your business {businessName} has a new local media opportunity";
-const INITIAL_BODY = `Hello,
-
-Best Version Media publishes highly localized, community-focused publications that connect neighborhood businesses with the residents who matter most to them. Our readers are homeowners and community members actively looking to support local businesses like yours.
-
-We've listed {businessName} in our local directory for {publicationName}, and we'd love for you to take ownership of your listing — update your details, explore advertising and highlight opportunities, and connect directly with your local publication team.
-
-Claiming your business is free and takes just a minute:
-
-{registrationUrl}
-
-If you have any questions, simply reply to this email — we're happy to help.
-
-Warm regards,`;
-
-const REMINDER_1_SUBJECT = "Following up: claim your listing in {publicationName}";
-const REMINDER_1_BODY = `Hello,
-
-We wanted to follow up on our earlier message about your listing in {publicationName}.
-
-{businessName} is already visible to local readers in your area. Claiming your free business profile lets you keep your information accurate and learn about highlight and advertising opportunities tailored to your community.
-
-Claim your listing here:
-{registrationUrl}
-
-Feel free to reply with any questions.
-
-Warm regards,`;
-
-const REMINDER_2_SUBJECT = "Last reminder: {businessName} listing in {publicationName}";
-const REMINDER_2_BODY = `Hello,
-
-This is our final reminder about your complimentary business listing in {publicationName}.
-
-We'd love to connect {businessName} with the community readers who are already seeing your listing. Creating your account is free and unlocks your full business profile:
-
-{registrationUrl}
-
-No action required if you'd prefer not to participate — your listing will remain as-is. But if you'd like to connect with your local publication team, we're just a reply away.
-
-Warm regards,`;
+const DEFAULT_ONBOARDING_MODEL = "claude-sonnet-5-5";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -88,28 +40,20 @@ function buildClaimUrl(token: string): string {
   return `${base}/register?claim=${encodeURIComponent(token)}`;
 }
 
-async function findSubAgentForOnboarding(): Promise<{ id: number; name: string } | null> {
+/** First Assistant sub agent with working SMTP, used to email submitters and businesses. */
+export async function findAssistantSubAgent(): Promise<{ id: number; name: string; soul: string } | null> {
   const agent = await prisma.agent.findUnique({
     where: { slug: "assistant" },
-    select: { subAgents: { select: { id: true, name: true, config: true }, orderBy: { createdAt: "asc" } } },
+    select: { subAgents: { select: { id: true, name: true, soul: true, config: true }, orderBy: { createdAt: "asc" } } },
   });
   if (!agent) return null;
   for (const sa of agent.subAgents) {
     const cfg = getSubAgentConfig(sa.config);
     if (cfg.smtpHost && cfg.smtpUser && cfg.smtpPassword && cfg.smtpFromEmail) {
-      return { id: sa.id, name: sa.name };
+      return { id: sa.id, name: sa.name, soul: sa.soul };
     }
   }
   return null;
-}
-
-function buildVars(
-  businessName: string,
-  publicationName: string,
-  registrationUrl: string,
-  agentName: string,
-): Record<string, string> {
-  return { businessName, publicationName, registrationUrl, agentName };
 }
 
 async function resolvePublicationName(postalCode: string | null): Promise<string> {
@@ -119,6 +63,110 @@ async function resolvePublicationName(postalCode: string | null): Promise<string
     select: { name: true },
   });
   return pub?.name ?? "your local publication";
+}
+
+/** What we know about a business and its history with us, as prompt lines for Claude. */
+async function describeBusiness(businessId: number): Promise<string[]> {
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: {
+      name: true,
+      primaryCategory: true,
+      categories: true,
+      description: true,
+      city: true,
+      stateCode: true,
+      website: true,
+      submissions: { orderBy: { createdAt: "desc" }, take: 3, select: { title: true } },
+      articles: { orderBy: { createdAt: "desc" }, take: 3, select: { title: true, status: true } },
+      _count: { select: { submissions: true, articles: true, ads: true } },
+    },
+  });
+  if (!business) return [];
+  const otherCategories = business.categories.filter((category) => category !== business.primaryCategory).slice(0, 6);
+  return [
+    `Business: ${business.name}`,
+    business.primaryCategory ? `Main category: ${business.primaryCategory}` : "",
+    otherCategories.length ? `Other categories: ${otherCategories.join(", ")}` : "",
+    business.city ? `Location: ${[business.city, business.stateCode].filter(Boolean).join(", ")}` : "",
+    business.website ? `Website: ${business.website}` : "",
+    business.description ? `Description (from public sources): ${business.description.slice(0, 400)}` : "",
+    business._count.submissions
+      ? `Residents have sent ${business._count.submissions} community story submission(s) about them, e.g. ${business.submissions.map((s) => `"${s.title}"`).join(", ")}`
+      : "",
+    business._count.articles
+      ? `Articles about them: ${business.articles.map((a) => `"${a.title}" (${a.status.toLowerCase()})`).join(", ")}`
+      : "",
+    business._count.ads ? `They have ${business._count.ads} advertisement record(s) with us.` : "",
+    "Their information was gathered from public sources; there has been no other contact unless the conversation below shows it.",
+  ].filter(Boolean);
+}
+
+type OnboardingEmailKind = "initial" | "reminder1" | "reminder2";
+
+const ONBOARDING_GOALS: Record<OnboardingEmailKind, string> = {
+  initial:
+    "This is the first email to them. Introduce yourself and the publication, explain that their business is already listed in the local directory, and invite them to claim the listing for free. Make it clear why it could matter to this specific business.",
+  reminder1:
+    "This is a friendly follow-up a couple of days after your first email, which got no answer. Do not repeat the first email; add one new, relevant angle for this business and re-share the claim link.",
+  reminder2:
+    "This is your last follow-up; you will not email them again about this. Keep it short and gracious, make clear there is no obligation and their listing stays as is, and re-share the claim link once.",
+};
+
+/**
+ * Has Claude write one onboarding email (first contact or reminder) to a business owner, in the
+ * sub agent's persona, from the business details, its history with us and the thread so far.
+ * Throws when Claude is not configured or returns nothing usable — no fixed text is sent instead.
+ */
+async function writeOnboardingEmail({
+  kind,
+  businessId,
+  publicationName,
+  registrationUrl,
+  subAgent,
+  thread,
+}: {
+  kind: OnboardingEmailKind;
+  businessId: number;
+  publicationName: string;
+  registrationUrl: string;
+  subAgent: { name: string; soul: string };
+  thread?: ThreadMessage[];
+}): Promise<{ subject: string; body: string }> {
+  const apiKey = process.env.CLAUDE_KEY;
+  if (!apiKey) throw new Error("CLAUDE_KEY is not set — onboarding emails are written by Claude, so nothing was sent.");
+
+  const settings = await getAssistantSettings();
+  const onboarding = (settings.onboarding as Record<string, unknown> | undefined) ?? {};
+  const model = typeof onboarding.model === "string" ? onboarding.model : DEFAULT_ONBOARDING_MODEL;
+  const guidance = typeof onboarding.instructions === "string" ? onboarding.instructions.trim() : "";
+  const facts = await describeBusiness(businessId);
+  const firstName = subAgent.name.split(/\s+/)[0];
+
+  const system = [
+    `You are ${subAgent.name}, part of the local publication team at Best Version Media, writing to a local business owner.`,
+    subAgent.soul ? `Your persona: ${subAgent.soul}` : "",
+    COMPANY_BRIEF,
+    "Write like a real neighbor from the publication team: plain words, short paragraphs, specific to this business, no marketing buzzwords or brochure bullet lists. Never invent prices, statistics, deadlines or facts about the business. Plain text only.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return draftContributorEmail({
+    apiKey,
+    model,
+    system,
+    requiredLink: registrationUrl,
+    prompt: `Write an email to the owner of this business about their listing in ${publicationName}.
+
+What we know about them:
+${facts.map((line) => `- ${line}`).join("\n")}
+
+${ONBOARDING_GOALS[kind]}
+Their personal claim link (include it once, on its own line, exactly as written): ${registrationUrl}
+${thread?.length ? `\nThe conversation so far, oldest first:\n${renderTranscript(thread, subAgent.name, "The business")}\n${INLINE_REPLY_NOTE}\n` : ""}${guidance ? `\nGuidance from the publication team (follow it):\n${guidance}\n` : ""}
+Keep it under ${kind === "reminder2" ? 110 : 170} words. Sign off with a short closing and your first name, ${firstName}; your full email signature is added automatically.`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +234,7 @@ export async function runReachoutTask(taskId: string): Promise<void> {
       return;
     }
 
-    const subAgent = await findSubAgentForOnboarding();
+    const subAgent = await findAssistantSubAgent();
     if (!subAgent) {
       await prisma.reachoutTask.update({
         where: { id: taskId },
@@ -199,22 +247,23 @@ export async function runReachoutTask(taskId: string): Promise<void> {
       return;
     }
 
-    const settings = await getAssistantSettings();
     const claimToken = await getOrCreateClaimToken(business.id);
     const registrationUrl = buildClaimUrl(claimToken);
     const publicationName = await resolvePublicationName(business.postalCode);
-    const vars = buildVars(business.name, publicationName, registrationUrl, subAgent.name);
-
-    const onboardingSettings = (settings.onboarding as Record<string, unknown> | undefined) ?? {};
-    const subjectTpl = typeof onboardingSettings.initialSubject === "string" ? onboardingSettings.initialSubject : INITIAL_SUBJECT;
-    const bodyTpl = typeof onboardingSettings.initialBody === "string" ? onboardingSettings.initialBody : INITIAL_BODY;
+    const email = await writeOnboardingEmail({
+      kind: "initial",
+      businessId: business.id,
+      publicationName,
+      registrationUrl,
+      subAgent,
+    });
 
     const { threadId } = await sendSubAgentEmail({
       subAgentId: subAgent.id,
       toEmail: business.email,
       toName: business.name,
-      subject: interpolate(subjectTpl, vars),
-      bodyText: interpolate(bodyTpl, vars),
+      subject: email.subject,
+      bodyText: email.body,
     });
 
     await prisma.reachoutTask.update({
@@ -223,7 +272,7 @@ export async function runReachoutTask(taskId: string): Promise<void> {
         subAgentId: subAgent.id,
         threadId,
         initialEmailSentAt: new Date(),
-        message: `Initial onboarding email sent to ${business.email}.`,
+        message: `Initial onboarding email (written by Claude) sent to ${business.email}.`,
       },
     });
   } catch (err) {
@@ -288,7 +337,7 @@ export async function checkReachoutReminders(): Promise<void> {
     where: { status: ReachoutTaskStatus.RUNNING, initialEmailSentAt: { not: null } },
     include: {
       business: { select: { id: true, name: true, email: true, postalCode: true, ownerUserId: true } },
-      subAgent: { select: { name: true } },
+      subAgent: { select: { name: true, soul: true } },
     },
   });
 
@@ -306,66 +355,58 @@ export async function checkReachoutReminders(): Promise<void> {
       continue;
     }
 
-    if (!task.business.email || !task.subAgentId || !task.initialEmailSentAt) continue;
-
-    const settings = await getAssistantSettings();
-    const claimToken = await getOrCreateClaimToken(task.business.id);
-    const registrationUrl = buildClaimUrl(claimToken);
-    const publicationName = await resolvePublicationName(task.business.postalCode);
-    const vars = buildVars(task.business.name, publicationName, registrationUrl, task.subAgent?.name ?? "");
-    const onboarding = (settings.onboarding as Record<string, unknown> | undefined) ?? {};
+    if (!task.business.email || !task.subAgentId || !task.subAgent || !task.initialEmailSentAt) continue;
 
     const initialMs = task.initialEmailSentAt.getTime();
+    const kind: OnboardingEmailKind | null =
+      !task.reminder1SentAt && now - initialMs >= REMINDER_1_DAYS * MS_PER_DAY
+        ? "reminder1"
+        : task.reminder1SentAt && !task.reminder2SentAt && now - initialMs >= REMINDER_2_DAYS * MS_PER_DAY
+          ? "reminder2"
+          : null;
+    if (!kind) continue;
 
-    // Reminder 1
-    if (!task.reminder1SentAt && now - initialMs >= REMINDER_1_DAYS * MS_PER_DAY) {
-      try {
-        const sub1Tpl = typeof onboarding.reminder1Subject === "string" ? onboarding.reminder1Subject : REMINDER_1_SUBJECT;
-        const bod1Tpl = typeof onboarding.reminder1Body === "string" ? onboarding.reminder1Body : REMINDER_1_BODY;
-        await sendSubAgentEmail({
-          subAgentId: task.subAgentId,
-          toEmail: task.business.email,
-          toName: task.business.name,
-          subject: interpolate(sub1Tpl, vars),
-          bodyText: interpolate(bod1Tpl, vars),
-          existingThreadId: task.threadId ?? undefined,
-        });
-        await prisma.reachoutTask.update({
-          where: { id: task.id },
-          data: { reminder1SentAt: new Date(), message: `Reminder 1 sent to ${task.business.email}.` },
-        });
-      } catch (err) {
-        console.error(`[ReachoutTask] Reminder 1 failed for task ${task.id}:`, err);
-      }
-      continue;
-    }
-
-    // Reminder 2
-    if (!task.reminder2SentAt && task.reminder1SentAt) {
-      const totalDays = (now - initialMs) / MS_PER_DAY;
-      if (totalDays >= REMINDER_2_DAYS) {
-        try {
-          const sub2Tpl = typeof onboarding.reminder2Subject === "string" ? onboarding.reminder2Subject : REMINDER_2_SUBJECT;
-          const bod2Tpl = typeof onboarding.reminder2Body === "string" ? onboarding.reminder2Body : REMINDER_2_BODY;
-          await sendSubAgentEmail({
-            subAgentId: task.subAgentId,
-            toEmail: task.business.email,
-            toName: task.business.name,
-            subject: interpolate(sub2Tpl, vars),
-            bodyText: interpolate(bod2Tpl, vars),
-            existingThreadId: task.threadId ?? undefined,
-          });
-          await prisma.reachoutTask.update({
-            where: { id: task.id },
-            data: {
-              reminder2SentAt: new Date(),
-              message: `Reminder 2 sent to ${task.business.email}. Sequence complete.`,
-            },
-          });
-        } catch (err) {
-          console.error(`[ReachoutTask] Reminder 2 failed for task ${task.id}:`, err);
-        }
-      }
+    try {
+      const claimToken = await getOrCreateClaimToken(task.business.id);
+      const thread = task.threadId
+        ? await prisma.emailThread.findUnique({
+            where: { id: task.threadId },
+            select: { messages: { orderBy: { createdAt: "asc" } } },
+          })
+        : null;
+      const email = await writeOnboardingEmail({
+        kind,
+        businessId: task.business.id,
+        publicationName: await resolvePublicationName(task.business.postalCode),
+        registrationUrl: buildClaimUrl(claimToken),
+        subAgent: task.subAgent,
+        thread: thread?.messages,
+      });
+      await sendSubAgentEmail({
+        subAgentId: task.subAgentId,
+        toEmail: task.business.email,
+        toName: task.business.name,
+        subject: email.subject,
+        bodyText: email.body,
+        existingThreadId: task.threadId ?? undefined,
+      });
+      await prisma.reachoutTask.update({
+        where: { id: task.id },
+        data:
+          kind === "reminder1"
+            ? { reminder1SentAt: new Date(), message: `Reminder 1 (written by Claude) sent to ${task.business.email}.` }
+            : {
+                reminder2SentAt: new Date(),
+                message: `Reminder 2 (written by Claude) sent to ${task.business.email}. Sequence complete.`,
+              },
+      });
+    } catch (err) {
+      // Not marked as sent, so the next check tries again
+      console.error(`[ReachoutTask] ${kind} failed for task ${task.id}:`, err);
+      await prisma.reachoutTask.update({
+        where: { id: task.id },
+        data: { message: `${kind === "reminder1" ? "Reminder 1" : "Reminder 2"} not sent: ${err instanceof Error ? err.message : String(err)}` },
+      });
     }
   }
 }

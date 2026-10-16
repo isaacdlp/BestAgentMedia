@@ -15,7 +15,6 @@ export type PreparedArticleImage = {
   originalName: string;
   mimeType: string;
   size: number;
-  caption: string;
   position: number;
 };
 
@@ -27,16 +26,6 @@ export async function prepareArticleImages(formData: FormData) {
   const files = values.filter(
     (value): value is File => value instanceof File && value.name.length > 0,
   );
-  const captionsValue = formData.get("newImageCaptions");
-  if (captionsValue !== null && typeof captionsValue !== "string") {
-    throw new Error("Image captions must be provided as text.");
-  }
-  const captions = typeof captionsValue === "string" && captionsValue.length
-    ? captionsValue.split(/\r?\n/)
-    : [];
-  if (captions.length && captions.length !== files.length) {
-    throw new Error("Provide one caption line per newly selected image.");
-  }
 
   const prepared: PreparedArticleImage[] = [];
   for (const [position, file] of files.entries()) {
@@ -73,7 +62,6 @@ export async function prepareArticleImages(formData: FormData) {
         file.name.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 255) || "image",
       mimeType,
       size: buffer.byteLength,
-      caption: captions[position]?.trim().slice(0, 500) ?? "",
       position,
     });
   }

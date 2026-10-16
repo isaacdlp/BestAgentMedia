@@ -1,6 +1,6 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { MessageDirection, Prisma } from "@prisma/client";
 import nodemailer from "nodemailer";
@@ -41,6 +41,8 @@ function smtpDomain(config: SubAgentConfig): string {
 
 const COMPANY_NAME = "Best Version Media";
 const SIGNATURE_PICTURE_CID = "signature-picture@bestagentmedia";
+/** Name of the signature picture we attach; inbound files with this name are never taken as photos. */
+const SIGNATURE_PICTURE_FILENAME = "signature.jpg";
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -55,6 +57,39 @@ async function loadSignaturePicture(picturePath: string | null): Promise<Buffer 
   } catch {
     return null;
   }
+}
+
+const sha256 = (content: Buffer) => createHash("sha256").update(content).digest("hex");
+
+/**
+ * True when an inbound attachment is one of our own signature pictures echoed back by the
+ * recipient's mail client (quoted replies re-attach the inline image, often under a new name and
+ * Content-ID), so it must not be mistaken for a photo the person sent.
+ */
+export async function isSignaturePicture(
+  content: Buffer | null,
+  { cid, fileName }: { cid?: string | null; fileName?: string | null } = {},
+): Promise<boolean> {
+  // Banned by name: any file called signature.jpg is treated as our signature, whatever its content
+  if (fileName?.trim().split(/[\\/]/).pop()?.toLowerCase() === SIGNATURE_PICTURE_FILENAME) return true;
+  if (cid?.replace(/^<|>$/g, "") === SIGNATURE_PICTURE_CID) return true;
+  if (!content) return false;
+  const directory = resolve(process.cwd(), "media", "sub-agents");
+  let files: string[];
+  try {
+    files = await readdir(directory);
+  } catch {
+    return false;
+  }
+  const hash = sha256(content);
+  for (const file of files) {
+    try {
+      if (sha256(await readFile(resolve(directory, file))) === hash) return true;
+    } catch {
+      // Unreadable file: not a match
+    }
+  }
+  return false;
 }
 
 export async function sendSubAgentEmail(opts: {
@@ -153,7 +188,7 @@ export async function sendSubAgentEmail(opts: {
     html: bodyHtml + signatureHtml,
     attachments: [
       ...(picture
-        ? [{ filename: "signature.jpg", content: picture, contentType: "image/jpeg", cid: SIGNATURE_PICTURE_CID, contentDisposition: "inline" as const }]
+        ? [{ filename: SIGNATURE_PICTURE_FILENAME, content: picture, contentType: "image/jpeg", cid: SIGNATURE_PICTURE_CID, contentDisposition: "inline" as const }]
         : []),
       ...(opts.attachments ?? []),
     ],

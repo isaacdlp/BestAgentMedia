@@ -77,9 +77,11 @@ export default async function AgentDetailPage({
           <p className="muted">{agent.description}</p>
         </div>
         <div className="page-heading-actions">
-          <span className={`role-pill ${agent.enabled ? "" : "role-pill-muted"}`}>
-            {agent.enabled ? "Enabled" : "Disabled"}
-          </span>
+          <div className="page-heading-status">
+            <span className={`role-pill ${agent.enabled ? "" : "role-pill-muted"}`}>
+              {agent.enabled ? "Enabled" : "Disabled"}
+            </span>
+          </div>
           <Link className="button button-secondary" href={`/tasks?agent=${agent.id}`}>
             Tasks
           </Link>
@@ -155,16 +157,18 @@ export default async function AgentDetailPage({
             <div className="agent-settings-reference">
               <p className="muted"><strong>Designer settings reference:</strong></p>
               <ul className="agent-settings-ref-list">
-                <li><code>model</code> — Claude model ID (default: <code>claude-opus-4-8</code>)</li>
-                <li><code>maxOutputTokens</code> — Maximum output tokens (default: <code>12000</code>)</li>
+                <li><code>layoutModel</code> — Claude model ID for composing issue layouts (default: <code>claude-opus-5-5</code>; <code>claude-fable-5-1</code> is the most capable)</li>
+                <li><code>layoutEffort</code> — Reasoning effort: <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code> or <code>max</code> (default: <code>high</code>)</li>
+                <li><code>layoutMaxOutputTokens</code> — Maximum output tokens per turn (default: <code>128000</code>; calls are streamed, so only generated tokens are billed)</li>
               </ul>
+              <p className="muted agent-settings-note">Trigger &ldquo;Generate Layout&rdquo; from an issue. The composed layout is a proposal on the task page until someone applies it to the issue.</p>
             </div>
           ) : agent.slug === "editor" ? (
             <div className="agent-settings-reference">
               <p className="muted"><strong>Editor settings reference:</strong></p>
               <ul className="agent-settings-ref-list">
-                <li><code>model</code> — Claude model ID (default: <code>claude-sonnet-4-5</code>)</li>
-                <li><code>maxOutputTokens</code> — Maximum output tokens (default: <code>4000</code>)</li>
+                <li><code>model</code> — Claude model ID (default: <code>claude-sonnet-5-5</code>)</li>
+                <li><code>maxOutputTokens</code> — Maximum output tokens (default and minimum: <code>64000</code>; calls are streamed, so only generated tokens are billed)</li>
               </ul>
               <p className="muted agent-settings-note">Trigger a review from any submission or article detail page using the &ldquo;Review&rdquo; button.</p>
             </div>
@@ -174,11 +178,10 @@ export default async function AgentDetailPage({
               <ul className="agent-settings-ref-list">
                 <li><code>registrationUrl</code> — URL sent in invite emails for users to register</li>
                 <li><code>submissionInvite.enabled</code> — Queue drafts for new submissions (default: <code>true</code>)</li>
-                <li><code>submissionInvite.subject</code> — Subject line. Supports: <code>{"{submitterName}"}</code>, <code>{"{publicationName}"}</code>, <code>{"{submissionTitle}"}</code></li>
-                <li><code>submissionInvite.body</code> — Email body. Same variables plus <code>{"{registrationUrl}"}</code></li>
-                <li><code>businessInvite.enabled</code> — Queue drafts for new businesses (default: <code>true</code>)</li>
-                <li><code>businessInvite.subject</code> — Subject line. Supports: <code>{"{businessName}"}</code>, <code>{"{publicationName}"}</code></li>
-                <li><code>businessInvite.body</code> — Email body. Same variables plus <code>{"{registrationUrl}"}</code></li>
+                <li><code>submissionInvite.instructions</code> — Optional guidance for Claude, who writes each invite from the submission and the sender&rsquo;s earlier submissions</li>
+                <li><code>submissionInvite.model</code> — Claude model ID for invites (default: <code>claude-haiku-5-5</code>)</li>
+                <li><code>onboarding.instructions</code> — Optional guidance for Claude, who writes each business onboarding email and reminder from the business details and its history with us</li>
+                <li><code>onboarding.model</code> — Claude model ID for onboarding emails (default: <code>claude-sonnet-5-5</code>)</li>
               </ul>
               <p className="muted agent-settings-note">Email sending is not yet implemented. Drafts are queued here for review.</p>
             </div>

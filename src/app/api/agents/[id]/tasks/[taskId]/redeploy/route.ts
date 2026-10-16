@@ -2,6 +2,7 @@ import { AgentTaskStatus, Prisma, UserRole } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { isComposedIssue } from "@/lib/issue-composition";
 
 type Params = { params: Promise<{ id: string; taskId: string }> };
 
@@ -27,7 +28,9 @@ export async function POST(_request: Request, { params }: Params) {
   if (!task.issueId) return NextResponse.json({ error: "This task has no associated issue." }, { status: 409 });
 
   const result = task.result as Record<string, unknown> | null;
-  const design = result?.design;
+  // A composed layout (src/lib/issue-composition.ts) is built into editor pages when the issue
+  // opens; older tasks stored a simple layout specification.
+  const design = isComposedIssue(result?.composition) ? result.composition : result?.design;
   if (!design || typeof design !== "object" || Array.isArray(design)) {
     return NextResponse.json({ error: "This task does not have a stored design. Re-run generation to create a redeployable task." }, { status: 409 });
   }

@@ -14,7 +14,7 @@ enum UserRole {
 }
 
 enum SubmissionStatus {
-  NEW
+  DRAFT
   IN_REVIEW
   NEEDS_INFORMATION
   ACCEPTED
@@ -31,12 +31,14 @@ enum AdvertisementStatus {
 
 enum IssueStatus {
   DRAFT
+  IN_REVIEW
   ACCEPTED
   PUBLISHED
 }
 
 enum ArticleStatus {
   DRAFT
+  IN_REVIEW
   ACCEPTED
   PUBLISHED
 }
@@ -193,6 +195,7 @@ model PromotionPackage {
   publication    Publication          @relation(fields: [publicationId], references: [id], onDelete: Cascade)
   deals          PromotionDeal[]
   advertisements Advertisement[]
+  articles       Article[]
   saleItems      PromotionSaleItem[]
 
   @@index([publicationId, kind, position])
@@ -232,7 +235,7 @@ model ContentSubmission {
   postalCode        String?
   storyType         String?
   body              String
-  status            SubmissionStatus  @default(NEW)
+  status            SubmissionStatus  @default(DRAFT)
   publicationId     Int
   submittedByUserId String?
   businessId        Int?
@@ -495,16 +498,23 @@ model Article {
   sourceSubmissionId String?              @unique
   createdByUserId    String?
   businessId         Int?
+  /// Paid promotion style (an article rate of an issue's publication) and its cost, as priced for the business.
+  promotionPackageId Int?
+  styleName          String?
+  costCents          Int?
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
   sourceSubmission   ContentSubmission?   @relation("SubmissionArticle", fields: [sourceSubmissionId], references: [id], onDelete: SetNull)
   createdBy          User?                @relation("ArticleAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
   business           Business?            @relation("ArticleBusiness", fields: [businessId], references: [id], onDelete: SetNull)
+  promotionPackage   PromotionPackage?    @relation(fields: [promotionPackageId], references: [id], onDelete: SetNull)
   issues             ArticleIssue[]
   images             ArticleImage[]
   placements         IssuePagePlacement[]
   promotionDeals     PromotionDeal[]
   saleItem           PromotionSaleItem?
+  /// Promote campaigns that sell this article to its business as a paid sponsored feature.
+  promotionSales     PromotionSale[]
 
   @@index([status, updatedAt])
   @@index([createdByUserId, updatedAt])
@@ -526,7 +536,6 @@ model ArticleImage {
   articleId    String
   fileName     String   @unique
   originalName String
-  caption      String   @default("")
   mimeType     String
   size         Int
   position     Int      @default(0)
@@ -615,6 +624,10 @@ model AgentTask {
   result        Json?           @db.JsonB
   error         String?
   issueId       String?
+  /// The submission, article or ad this task works on ("submission" | "article" | "ad"), so it
+  /// can be stopped when that record is accepted.
+  subjectType   String?
+  subjectId     String?
   triggeredById String?
   createdAt     DateTime        @default(now())
   startedAt     DateTime?
@@ -632,6 +645,7 @@ model AgentTask {
   @@index([status, createdAt])
   @@index([issueId])
   @@index([subAgentId])
+  @@index([subjectType, subjectId])
 }
 
 // Unified registry of long-running operations shown in the Tasks section. Rows are
@@ -751,6 +765,8 @@ model PromotionSale {
   /// The issue the campaign was launched for; other upcoming issues of the publication may be sold too.
   issueId         String?
   publicationId   Int
+  /// Article this campaign sells as a paid sponsored feature (Promote on an article page); null for issue campaigns.
+  articleId       String?
   subAgentId      Int?
   threadId        String?             @unique
   /// Custom instructions from staff for the Marketer, applied to every message in the conversation.
@@ -768,6 +784,7 @@ model PromotionSale {
   agentTask       AgentTask           @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
   business        Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   issue           Issue?              @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  article         Article?            @relation(fields: [articleId], references: [id], onDelete: SetNull)
   publication     Publication         @relation(fields: [publicationId], references: [id], onDelete: Cascade)
   subAgent        SubAgent?           @relation(fields: [subAgentId], references: [id], onDelete: SetNull)
   thread          EmailThread?        @relation(fields: [threadId], references: [id], onDelete: SetNull)
@@ -776,6 +793,7 @@ model PromotionSale {
 
   @@index([businessId, createdAt])
   @@index([issueId, createdAt])
+  @@index([articleId])
   @@index([status, createdAt])
 }
 

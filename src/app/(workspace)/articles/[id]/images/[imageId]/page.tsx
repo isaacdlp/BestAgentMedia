@@ -25,7 +25,6 @@ export default async function ArticleImagePage({
     },
     select: {
       originalName: true,
-      caption: true,
       size: true,
       mimeType: true,
       position: true,
@@ -63,7 +62,7 @@ export default async function ArticleImagePage({
 
       <section className="panel submission-image-detail">
         <Image
-          alt={image.caption || image.originalName}
+          alt={image.originalName}
           height={1000}
           src={imageSrc}
           unoptimized
@@ -73,7 +72,6 @@ export default async function ArticleImagePage({
           <strong>{image.originalName}</strong>
           <span>
             {image.mimeType} · {(image.size / (1024 * 1024)).toFixed(1)} MB
-            {image.caption ? ` · "${image.caption}"` : ""}
           </span>
         </div>
       </section>
