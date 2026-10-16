@@ -65,7 +65,7 @@ export default async function NewBusinessPage() {
             </label>
             <label className="business-field">
               <span>Postal code</span>
-              <input autoComplete="postal-code" name="postalCode" />
+              <input autoComplete="postal-code" inputMode="numeric" maxLength={5} name="postalCode" pattern="[0-9]{5}" title="Exactly 5 digits" />
             </label>
             <label className="business-field">
               <span>Country code</span>

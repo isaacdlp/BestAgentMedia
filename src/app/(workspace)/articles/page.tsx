@@ -9,6 +9,13 @@ import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/compone
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
 
+const STATUS_OPTIONS = [
+  { label: "Draft", value: "DRAFT" },
+  { label: "In review", value: "IN_REVIEW" },
+  { label: "Accepted", value: "ACCEPTED" },
+  { label: "Published", value: "PUBLISHED" },
+];
+
 const SORT_OPTIONS = [
   { label: "Updated", value: "updatedAt" },
   { label: "Title", value: "title" },
@@ -64,6 +71,8 @@ export default async function ArticlesPage({
   ]);
   const canCreate = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
 
+  const canManage = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
+
   return (
     <>
       <div className="page-heading">
@@ -84,13 +93,16 @@ export default async function ArticlesPage({
         {articles.length ? (
           <RecordDeleteScope
             apiBase="/api/articles"
-            bulk={user.role === UserRole.ADMIN}
+            bulk={canManage}
+            canDelete={user.role === UserRole.ADMIN}
+            statusKind="article"
+            statusOptions={STATUS_OPTIONS}
             ids={articles.map((article) => article.id)}
             noun="article"
           >
           <div className="table-wrap">
             <table>
-              <thead><tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Article</th><th>Issues</th><th>Status</th><th>Images</th><th>Updated</th></tr></thead>
+              <thead><tr><RecordSelectHead bulk={canManage} /><th>Article</th><th>Issues</th><th>Status</th><th>Images</th><th>Updated</th></tr></thead>
               <tbody>
                 {articles.map((article) => (
                   <tr key={article.id}>

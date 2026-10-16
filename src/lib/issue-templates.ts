@@ -8,7 +8,6 @@ import {
   paragraphSeparator,
   parseArticleMarkdown,
   sliceParagraph,
-  withSuffix,
   type RichParagraph,
 } from "@/lib/article-rich-text";
 import { DEFAULT_PAGE_HEIGHT, DEFAULT_PAGE_WIDTH, type IssuePageType } from "@/lib/issue-design";
@@ -660,9 +659,9 @@ export function isAdSlot(slot: TemplateSlot | undefined): slot is TemplateImageS
   return slot?.kind === "image" && slot.role === "ad";
 }
 
-// Shortens article text to a slot's character limit.
+// Shortens article text to a slot's character limit, keeping only whole sentences.
 export function fitSlotText(slot: TemplateTextSlot, text: string) {
-  return slot.maxChars ? truncateAtWord(text, slot.maxChars) : text;
+  return slot.maxChars ? fitSentences(text, slot.maxChars) : text;
 }
 
 export function slotStory(slot: TemplateSlot) {
@@ -677,16 +676,58 @@ export function plainTextParagraphs(markdown: string) {
     .map((paragraph) => paragraph.text);
 }
 
-function truncateAtWord(text: string, maxLength: number) {
-  if (text.length <= maxLength) return text;
-  const cut = text.slice(0, maxLength);
-  const lastSpace = cut.lastIndexOf(" ");
-  return `${(lastSpace > maxLength * 0.6 ? cut.slice(0, lastSpace) : cut).replace(/[\s,;:.-]+$/, "")}…`;
+// Words whose trailing period does not end a sentence.
+const ABBREVIATIONS = new Set([
+  "mr", "mrs", "ms", "dr", "st", "jr", "sr", "prof", "rev", "gov", "sen", "rep", "gen", "capt", "lt", "col", "sgt",
+  "mt", "ft", "ave", "blvd", "rd", "hwy", "inc", "co", "corp", "ltd", "no", "vs", "etc", "approx", "dept", "est",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec", "a.m", "p.m", "e.g", "i.e", "u.s",
+]);
+
+/**
+ * Splits text into sentences, each with its closing punctuation and quotes. A period ends a
+ * sentence only before whitespace and a capital, digit or quote, and not after an abbreviation
+ * or an initial; text without a closing mark is the last "sentence".
+ */
+export function splitSentences(text: string) {
+  const sentences: string[] = [];
+  const pattern = /[.!?]+["”’)\]]*(?=\s+["“‘(]?[\p{Lu}\p{N}]|\s*$)/gu;
+  let start = 0;
+  for (const match of text.matchAll(pattern)) {
+    const end = (match.index ?? 0) + match[0].length;
+    const word = text.slice(start, match.index).split(/\s+/).pop()?.toLowerCase().replace(/^["“‘(]+/, "") ?? "";
+    if (match[0].startsWith(".") && (ABBREVIATIONS.has(word) || /^\p{L}$/u.test(word))) continue;
+    const sentence = text.slice(start, end).trim();
+    if (sentence) sentences.push(sentence);
+    start = end;
+  }
+  const rest = text.slice(start).trim();
+  if (rest) sentences.push(rest);
+  return sentences;
 }
 
-// Turns a Markdown article body into a short plain-text caption.
+/**
+ * Shortens text to at most `maxLength` characters without cutting a sentence: it keeps as many
+ * leading sentences as fit. When even the first sentence is too long, the first complete
+ * sentence that fits is used instead, and failing that the whole first sentence (template frames
+ * shrink their text to fit). Text is never cut mid-sentence or given an ellipsis.
+ */
+export function fitSentences(text: string, maxLength: number) {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  const sentences = splitSentences(trimmed);
+  let fitted = "";
+  for (const sentence of sentences) {
+    const next = fitted ? `${fitted} ${sentence}` : sentence;
+    if (next.length > maxLength) break;
+    fitted = next;
+  }
+  if (fitted) return fitted;
+  return sentences.find((sentence) => sentence.length <= maxLength && sentence.length >= Math.min(25, maxLength / 2)) ?? sentences[0] ?? trimmed;
+}
+
+// Turns a Markdown article body into a short plain-text caption of whole sentences.
 export function plainTextExcerpt(markdown: string, maxLength = 220) {
-  return truncateAtWord(plainTextParagraphs(markdown)[0] ?? "", maxLength);
+  return fitSentences(plainTextParagraphs(markdown)[0] ?? "", maxLength);
 }
 
 function curlyQuoted(text: string) {
@@ -701,11 +742,11 @@ export function pullQuoteText(markdown: string) {
   const quote = parseArticleMarkdown(markdown).quotes[0];
   if (quote) return curlyQuoted(quote);
   const paragraphs = plainTextParagraphs(markdown);
-  const sentences = (list: string[]) =>
-    list.flatMap((paragraph) => paragraph.match(/[^.!?]+[.!?]+["”’)]*/g) ?? []).map((sentence) => sentence.trim());
+  // Only complete sentences (ending in a closing mark) make a pull quote.
+  const sentences = (list: string[]) => list.flatMap(splitSentences).filter((sentence) => /[.!?]["”’)\]]*$/.test(sentence));
   const fits = (sentence: string) => sentence.length >= 40 && sentence.length <= 160;
   const sentence =
-    sentences(paragraphs.slice(1)).find(fits) ?? sentences(paragraphs).find(fits) ?? truncateAtWord(paragraphs[0] ?? "", 140);
+    sentences(paragraphs.slice(1)).find(fits) ?? sentences(paragraphs).find(fits) ?? fitSentences(paragraphs[0] ?? "", 160);
   return curlyQuoted(sentence);
 }
 
@@ -738,7 +779,7 @@ function slotLineMetrics(slot: TemplateTextSlot) {
 }
 
 // Splits paragraphs into one part per column, in column order. When the text is longer than the
-// columns hold, "truncate" ends the last column with an ellipsis; otherwise the rest is kept in
+// columns hold, "truncate" ends the last column on its last complete sentence; otherwise the rest is kept in
 // the last column (clipped on the page, but not lost if the column is enlarged).
 export function flowTextIntoColumns(paragraphs: RichParagraph[], slots: TemplateTextSlot[], overflow: "truncate" | "keep") {
   return flowColumns(paragraphs, slots, overflow).parts;
@@ -749,6 +790,19 @@ export function flowTextWithRest(paragraphs: RichParagraph[], slots: TemplateTex
   return flowColumns(paragraphs, slots, "split");
 }
 
+// Characters a text slot shows before its frame clips lines (with a margin for the estimate),
+// or Infinity for slots that grow with their text.
+export function slotCharCapacity(slot: TemplateTextSlot) {
+  if (!slot.verticalAlign) return Number.POSITIVE_INFINITY;
+  const { lines, charsPerLine } = slotLineMetrics(slot);
+  return Math.floor(lines * charsPerLine * 0.9);
+}
+
+// The longest text a slot takes: its character limit or what its frame holds, whichever is less.
+export function slotTextLimit(slot: TemplateTextSlot, fallback = 220) {
+  return Math.min(slot.maxChars ?? fallback, slotCharCapacity(slot));
+}
+
 // Approximate number of words a set of body columns holds.
 export function columnWordCapacity(slots: TemplateTextSlot[]) {
   const chars = slots.reduce((sum, slot) => {
@@ -756,6 +810,20 @@ export function columnWordCapacity(slots: TemplateTextSlot[]) {
     return sum + lines * charsPerLine;
   }, 0);
   return Math.round(chars / 6.2);
+}
+
+// End offset of the last complete sentence of `text` that ends within `limit` characters (0 if none).
+function lastSentenceEnd(text: string, limit: number) {
+  let end = 0;
+  let position = 0;
+  for (const sentence of splitSentences(text)) {
+    const start = text.indexOf(sentence, position);
+    const sentenceEnd = start + sentence.length;
+    if (start < 0 || sentenceEnd > limit) break;
+    if (/[.!?]["”’)\]]*$/.test(sentence)) end = sentenceEnd;
+    position = sentenceEnd;
+  }
+  return end;
 }
 
 function flowColumns(paragraphs: RichParagraph[], slots: TemplateTextSlot[], overflow: "truncate" | "keep" | "split") {
@@ -795,11 +863,11 @@ function flowColumns(paragraphs: RichParagraph[], slots: TemplateTextSlot[], ove
         }
         // A subheading moves with the text it introduces.
         while (current.length > 1 && current[current.length - 1].heading) rest.unshift(current.pop() as RichParagraph);
-      } else if (cut > 0) {
-        const kept = sliceParagraph(paragraph, 0, cut);
-        current.push(withSuffix(sliceParagraph(kept, 0, kept.text.replace(/[\s,;:.-]+$/, "").length), "…"));
-      } else if (previous) {
-        current[current.length - 1] = withSuffix(previous, "…");
+      } else {
+        // The column ends on the last whole sentence that fits, never mid-sentence.
+        const end = paragraph.heading ? 0 : lastSentenceEnd(paragraph.text, room);
+        if (end > 0) current.push(sliceParagraph(paragraph, 0, end));
+        while (current.length && current[current.length - 1].heading) current.pop();
       }
       queue.length = 0;
       break;

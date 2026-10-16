@@ -74,9 +74,11 @@ export default async function DashboardPage() {
           <h1>Good morning, {user.name}</h1>
           <p className="muted">{roleDescription}</p>
         </div>
-        <span className="role-pill">
-          {user.role ? user.role.toLowerCase() : "contributor"}
-        </span>
+        <div className="page-heading-status">
+          <span className="role-pill">
+            {user.role ? user.role.toLowerCase() : "contributor"}
+          </span>
+        </div>
       </div>
 
       <section aria-label="Workspace totals" className="stat-grid">

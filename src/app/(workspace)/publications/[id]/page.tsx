@@ -119,7 +119,7 @@ export default async function PublicationDetailPage({
             Publication details and ZIP code distribution area.
           </p>
         </div>
-        {canEdit ? <span className="role-pill">Administrator edit</span> : null}
+        {canEdit ? <div className="page-heading-status"><span className="role-pill">Administrator edit</span></div> : null}
       </div>
 
       <div className="publication-detail-grid">

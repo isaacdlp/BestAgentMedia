@@ -1,5 +1,6 @@
 import { BusinessImportTaskStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { normalizeZipCode } from "@/lib/postal-code";
 import { buildPublicationMapData, geometryContainsCoordinate } from "@/lib/zip-code-map";
 import { triggerReachoutOnboarding } from "@/lib/reachout-tasks";
 
@@ -150,7 +151,8 @@ export async function runBusinessImportTask(taskId: string) {
                   city: address.city ?? null,
                   state: address.state ?? null,
                   stateCode: address.stateCode ?? null,
-                  postalCode: address.postalCode ?? null,
+                  // HERE may return ZIP+4; the item is inside this ZIP's boundary, so fall back to it.
+                  postalCode: normalizeZipCode(address.postalCode) ?? task.zipCode,
                   countryCode: address.countryCode ?? null,
                   latitude: item.position.lat,
                   longitude: item.position.lng,

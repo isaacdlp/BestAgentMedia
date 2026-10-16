@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { UserRole } from "@prisma/client";
-import { updateAdvertisementStatus } from "@/app/actions/records";
 import { getAdvertisementScope } from "@/lib/access";
 import { requireUser } from "@/lib/auth";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -9,6 +8,14 @@ import { ListPagination } from "@/components/list-pagination";
 import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
+
+const STATUS_OPTIONS = [
+  { label: "Draft", value: "DRAFT" },
+  { label: "In review", value: "IN_REVIEW" },
+  { label: "Approved", value: "APPROVED" },
+  { label: "Published", value: "PUBLISHED" },
+  { label: "Declined", value: "DECLINED" },
+];
 
 const SORT_OPTIONS = [
   { label: "Updated", value: "updatedAt" },
@@ -89,20 +96,22 @@ export default async function AdsPage({
         {ads.length ? (
           <RecordDeleteScope
             apiBase="/api/ads"
-            bulk={user.role === UserRole.ADMIN}
+            bulk={canManage}
+            canDelete={user.role === UserRole.ADMIN}
+            statusKind="ad"
+            statusOptions={STATUS_OPTIONS}
             ids={ads.map((ad) => ad.id)}
             noun="ad"
           >
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} />
+                <tr><RecordSelectHead bulk={canManage} />
                   <th>Ad</th>
                   <th>Business</th>
                   <th>Issues</th>
                   <th>Status</th>
                   <th>Updated</th>
-                  {canManage ? <th>Review</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -118,22 +127,7 @@ export default async function AdsPage({
                     <td>{ad.issues.map(({ issue }) => `${issue.publication.name} · ${issue.name}`).join(", ") || "—"}</td>
                     <td><span className="status-pill">{formatStatus(ad.status)}</span></td>
                     <td>{ad.updatedAt.toLocaleDateString()}</td>
-                    {canManage ? (
-                      <td>
-                        <form action={updateAdvertisementStatus} className="inline-edit">
-                          <input name="id" type="hidden" value={ad.id} />
-                          <select aria-label={`Update ${ad.title} status`} defaultValue={ad.status} name="status">
-                            <option value="DRAFT">Draft</option>
-                            <option value="IN_REVIEW">In review</option>
-                            <option value="APPROVED">Approved</option>
-                            <option value="PUBLISHED">Published</option>
-                            <option value="DECLINED">Declined</option>
-                          </select>
-                          <button className="button button-small" type="submit">Save</button>
-                        </form>
-                      </td>
-                    ) : null}
-</tr>
+                  </tr>
                 ))}
               </tbody>
             </table>

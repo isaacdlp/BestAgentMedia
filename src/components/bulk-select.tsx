@@ -55,15 +55,20 @@ export function BulkActionBar({
   someSelected,
   onToggleAll,
   onDelete,
+  statusOptions,
+  onApplyStatus,
   busy = false,
 }: {
   count: number;
   allSelected: boolean;
   someSelected: boolean;
   onToggleAll: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
+  statusOptions?: Array<{ label: string; value: string }>;
+  onApplyStatus?: (status: string) => void;
   busy?: boolean;
 }) {
+  const [status, setStatus] = useState("");
   const checkboxRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (checkboxRef.current) checkboxRef.current.indeterminate = someSelected;
@@ -81,7 +86,31 @@ export function BulkActionBar({
         />
         <span>{count ? `${count} selected` : "Select all on this page"}</span>
       </label>
-      {count ? (
+      {count && statusOptions && onApplyStatus ? (
+        <span className="bulk-action-status">
+          <select
+            className="bulk-action-status-select"
+            aria-label="Status to apply to selected"
+            disabled={busy}
+            onChange={(event) => setStatus(event.target.value)}
+            value={status}
+          >
+            <option value="">Status</option>
+            {statusOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <button
+            className="button button-secondary button-small"
+            disabled={busy || !status}
+            onClick={() => onApplyStatus(status)}
+            type="button"
+          >
+            Apply
+          </button>
+        </span>
+      ) : null}
+      {count && onDelete ? (
         <button
           className="button button-secondary button-small bulk-action-delete"
           disabled={busy}

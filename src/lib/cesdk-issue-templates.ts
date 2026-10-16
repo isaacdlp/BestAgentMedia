@@ -138,7 +138,9 @@ function createTextSlot(
   if (color) engine.block.setTextColor(block, color);
   engine.block.setEnum(block, "text/horizontalAlignment", slot.align);
   if (rich) writeRichText(engine, block, rich, slot.fontSize * frame.fontScale, !!slot.bold);
-  if (slot.autoFit && slot.verticalAlign) {
+  // Body columns are flowed to fit; other fixed frames (headlines, intros, captions, teasers,
+  // quotes) shrink a text that is still too long instead of clipping its last lines.
+  if ((slot.autoFit || slot.role !== "body") && slot.verticalAlign) {
     // Long texts (a publication name, a cover line) shrink to fit, never above the template size.
     tryStyle(() => {
       const size = engine.block.getFloat(block, "text/fontSize");

@@ -1,13 +1,12 @@
 import { copyFile, mkdir, stat as fsStat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { ArticleStatus, PrismaClient, SubmissionStatus, UserRole } from "@prisma/client";
+import { PrismaClient, SubmissionStatus, UserRole } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { z } from "zod";
 import { seedHereCategories } from "./here-category-seed";
 import { seedPublications } from "./publication-seed";
 import { seedZipCodeBoundaries } from "./zip-code-boundary-seed";
 import submissionFixtures from "./seed/submissions/submissions.json";
-import articleFixtures from "./seed/articles/articles.json";
 
 const prisma = new PrismaClient();
 
@@ -50,7 +49,6 @@ async function main() {
   await seedPublications(prisma);
   await seedEditors(passwordHash);
   await seedSubmissions(passwordHash);
-  await seedArticles(admin.id);
   await seedHereCategories(prisma);
   await seedAgents();
 }
@@ -151,62 +149,6 @@ async function seedSubmissions(passwordHash: string) {
   console.info(
     `Seeded ${contributors.length} contributors and ${demoSubmissions.length} submissions for ${publication.name}.`,
   );
-}
-
-const demoArticles = z
-  .array(
-    z.object({
-      id: z.string().min(1),
-      sourceSubmissionId: z.string().min(1),
-      title: z.string().min(1),
-      body: z.string().min(1),
-      status: z.nativeEnum(ArticleStatus),
-      images: z.array(
-        z.object({
-          fileName: z.string().regex(/^[a-z0-9-]+.(?:png|jpe?g|webp)$/i),
-          originalName: z.string().min(1).max(255),
-          mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
-        }),
-      ),
-    }),
-  )
-  .parse(articleFixtures);
-
-const articleSeedDirectory = resolve(process.cwd(), "prisma", "seed", "articles");
-const articleMediaDirectory = resolve(process.cwd(), "media", "articles");
-
-/** Creates the sample articles (with images) that were written from the seeded submissions. */
-async function seedArticles(authorId: string) {
-  await mkdir(articleMediaDirectory, { recursive: true });
-  for (const article of demoArticles) {
-    const data = {
-      title: article.title,
-      body: article.body,
-      status: article.status,
-      sourceSubmissionId: article.sourceSubmissionId,
-      createdByUserId: authorId,
-    };
-    // Keyed by the source submission so an article already written from it is updated, not duplicated.
-    const { id: articleId } = await prisma.article.upsert({
-      where: { sourceSubmissionId: article.sourceSubmissionId },
-      update: data,
-      create: { id: article.id, ...data },
-      select: { id: true },
-    });
-
-    for (const [position, image] of article.images.entries()) {
-      const destinationPath = resolve(articleMediaDirectory, image.fileName);
-      await copyFile(resolve(articleSeedDirectory, image.fileName), destinationPath);
-      const { size } = await fsStat(destinationPath);
-      const imageData = { originalName: image.originalName, mimeType: image.mimeType, size, position, articleId };
-      await prisma.articleImage.upsert({
-        where: { fileName: image.fileName },
-        update: imageData,
-        create: { fileName: image.fileName, ...imageData },
-      });
-    }
-  }
-  console.info(`Seeded ${demoArticles.length} articles.`);
 }
 
 const userSeedDirectory =resolve(process.cwd(), "prisma", "seed", "users");

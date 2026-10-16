@@ -74,7 +74,7 @@ export default async function AgentsPage({
           <h1>Agents</h1>
           <p className="muted">Configure and monitor AI agents that assist the publication workflow.</p>
         </div>
-        <span className="role-pill">{total} agent{total !== 1 ? "s" : ""}</span>
+        <div className="page-heading-status"><span className="role-pill">{total} agent{total !== 1 ? "s" : ""}</span></div>
       </div>
 
       <section className="panel agent-list-panel">

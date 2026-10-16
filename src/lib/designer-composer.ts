@@ -9,16 +9,17 @@ import { articleImageDirectory } from "@/lib/article-images";
 import { effortFor } from "@/lib/claude-request";
 import type { TaskStep } from "@/lib/agent-task-runner";
 import {
+  applyArticleEdits,
   composeIssue,
   countWords,
   describeTemplates,
   MAX_COMPOSED_PAGES,
   repairPlan,
+  type ArticleEdit,
   type CompositionContext,
   type CompositionPlan,
   type ComposedIssue,
 } from "@/lib/issue-composition";
-import { plainTextExcerpt } from "@/lib/issue-templates";
 import { ISSUE_PAGE_TEMPLATES } from "@/lib/issue-templates";
 
 /** Composition is a hard planning problem; Opus 5.5 at high effort balances quality and cost. */
@@ -58,6 +59,9 @@ export type ComposerInput = {
   log: (level: TaskStep["level"], message: string) => void;
 };
 
+// One article whose text the Designer shortened to fit the layout (the saved article is unchanged).
+export type TextEditSummary = { articleId: string; title: string; originalWords: number; fittedWords: number; reason: string };
+
 export type ComposerResult = {
   contentType: "layout-composition";
   model: string;
@@ -68,6 +72,7 @@ export type ComposerResult = {
   outcome: "designer" | "repaired" | "fallback";
   repairs: string[];
   warnings: string[];
+  textEdits: TextEditSummary[];
   summary: string;
   pageCount: number;
   articleCount: number;
@@ -90,7 +95,7 @@ function submitLayoutTool(): Anthropic.Beta.BetaTool {
     input_schema: {
       type: "object",
       additionalProperties: false,
-      required: ["summary", "pages"],
+      required: ["summary", "pages", "article_edits"],
       properties: {
         summary: {
           type: "string",
@@ -102,7 +107,7 @@ function submitLayoutTool(): Anthropic.Beta.BetaTool {
           items: {
             type: "object",
             additionalProperties: false,
-            required: ["page_type", "template_id", "stories", "ad_ids", "headline", "intro", "note"],
+            required: ["page_type", "template_id", "stories", "ad_ids", "note"],
             properties: {
               page_type: { type: "string", enum: ["COVER", "INNER", "BACK_COVER"] },
               template_id: { type: "string", enum: ISSUE_PAGE_TEMPLATES.map((template) => template.id) },
@@ -117,14 +122,39 @@ function submitLayoutTool(): Anthropic.Beta.BetaTool {
                     story: { type: "integer", description: "Story number in the template (0 = continued text)." },
                     article_id: { type: "string" },
                     headline: { ...nullableString, description: "Optional cover line or headline; null uses the article title." },
-                    teaser: { ...nullableString, description: "Optional teaser for cover and back-cover stories; null uses the article's opening." },
+                    teaser: {
+                      ...nullableString,
+                      description:
+                        "Optional teaser for cover and back-cover stories: complete sentences within the story's teaserMaxChars (text is never cut); null uses the article's opening sentences.",
+                    },
                   },
                 },
               },
-              ad_ids: { type: "array", items: { type: "string" }, description: "Ads for the template's ad slots, in slot order." },
-              headline: { ...nullableString, description: "Back cover only: headline when the page shows an ad instead of a story." },
-              intro: { ...nullableString, description: "Back cover only: short introduction under that headline." },
+              ad_ids: {
+                type: "array",
+                items: { type: "string" },
+                description: "Ads for the template's ad slots, in slot order. Always empty on the COVER and BACK_COVER.",
+              },
               note: { type: "string", description: "One short line on why this page is laid out this way." },
+            },
+          },
+        },
+        article_edits: {
+          type: "array",
+          description:
+            "Fitted texts for articles that are too long (or end awkwardly) for the chosen templates. Leave empty when every article fits as written. An edit stays in effect for later submissions until you replace it, or revert it with body null.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["article_id", "body", "reason"],
+            properties: {
+              article_id: { type: "string" },
+              body: {
+                ...nullableString,
+                description:
+                  "The article's complete fitted text in the same Markdown as the original (no title), no longer than the original; null restores the original text.",
+              },
+              reason: { type: "string", description: "One short line on what was trimmed and why." },
             },
           },
         },
@@ -151,16 +181,24 @@ const planInputSchema = z.object({
           )
           .max(8),
         ad_ids: z.array(z.string().max(64)).max(8),
-        headline: z.string().max(200).nullable(),
-        intro: z.string().max(600).nullable(),
         note: z.string().max(600),
       }),
     )
     .max(MAX_COMPOSED_PAGES * 2),
+  article_edits: z
+    .array(
+      z.object({
+        article_id: z.string().max(64),
+        body: z.string().max(200_000).nullable(),
+        reason: z.string().max(600),
+      }),
+    )
+    .max(200),
 });
 
-function toPlan(input: z.infer<typeof planInputSchema>): CompositionPlan {
+function toPlan(input: z.infer<typeof planInputSchema>, articleEdits: ArticleEdit[]): CompositionPlan {
   return {
+    articleEdits,
     summary: input.summary.trim(),
     pages: input.pages.map((page) => ({
       type: page.page_type,
@@ -172,14 +210,12 @@ function toPlan(input: z.infer<typeof planInputSchema>): CompositionPlan {
         teaser: entry.teaser,
       })),
       adIds: page.ad_ids,
-      headline: page.headline,
-      intro: page.intro,
       note: page.note.trim(),
     })),
   };
 }
 
-const SYSTEM_PROMPT = `You are the Designer at Best Version Media, which publishes premium, professionally printed community magazines mailed to every home in a local area. You compose complete issues: you decide the running order and choose a page template for every page, then assign the issue's articles to the templates' stories and its ads to their ad slots. You never invent articles, facts, quotes or ads. The only words you write are optional cover lines, cover teasers, and a back-cover headline and introduction, all drawn from the articles and ads you are given.
+const SYSTEM_PROMPT = `You are the Designer at Best Version Media, which publishes premium, professionally printed community magazines mailed to every home in a local area. You compose complete issues: you decide the running order and choose a page template for every page, then assign the issue's articles to the templates' stories and its ads to their ad slots. You never invent articles, facts, quotes or ads. The words you write are optional cover lines and cover teasers, and, when an article does not fit its pages, a shortened version of that article's text. All of it is drawn from the articles and ads you are given.
 
 You submit the layout with the submit_layout tool. The server checks the plan and simulates exactly how every article's text flows through the body columns, then either accepts it or lists what to fix. When it lists problems, fix all of them and call submit_layout again with the complete corrected plan.`;
 
@@ -187,12 +223,20 @@ function rules(adCount: number) {
   return `How composition works
 - Page 1 is the COVER and uses "journer-cover"; the last page is the BACK_COVER and uses "journer-back-cover". Every page in between is INNER. Use as many inner pages as the content needs (at most ${MAX_COMPOSED_PAGES - 2}), and no empty or filler pages.
 - Each template has numbered stories. A story groups a headline, an introduction or caption, photos, a pull quote and body columns. "bodyWords" estimates how many words a story's columns hold; the server's simulation is exact, so use its feedback to adjust.
-- Every article must be printed in full on inner pages. An article's first inner placement shows its title, opening and photos, and its text then flows automatically, in page order, through every later story assigned to the same article. A long article therefore continues on later pages: give it more stories (for example "text-columns", a "quarter-page-ad" or "half-page-ad" story, or story 0 of "two-stories", which exists only for text continued from an earlier page). Continuation headlines read "<title> (continued)" automatically.
-- Every photo is printed once in the issue. The cover's lead story and a featured back-cover story each take one of their article's photos; the inner pages use the article's remaining photos in order. An article leading the cover or back cover should therefore have a spare photo; one with a single photo cannot also show it inside. Photo slots, and ad slots whose ad has no artwork, that still have no photo are filled with an unused photo of another article, so prefer templates whose photo slots an article can fill itself. Articles without photos suit "text-columns", "half-page-ad" and "quarter-page-ad".
+- Every article must be printed in full on inner pages: either its original text or the fitted text you submit for it in "article_edits" (see "Fitting text"). An article's first inner placement shows its title, opening and photos, and its text then flows automatically, in page order, through every later story assigned to the same article. A long article therefore continues on later pages: give it more stories (for example "text-columns", a "quarter-page-ad" or "half-page-ad" story, or story 0 of "two-stories", which exists only for text continued from an earlier page). Continuation headlines read "<title> (continued)" automatically.
+- Every photo is printed once in the issue. The cover's lead story and a featured back-cover story each take one of their article's photos; the inner pages use the article's remaining photos in order. An article leading the cover or back cover should therefore have a spare photo; one with a single photo cannot also show it inside. Photo slots, and ad slots whose ad has no artwork, that still have no photo are filled with an unused photo of another article, so prefer templates whose photo slots an article can fill itself.
+- No hanging text: every caption, introduction, teaser and pull quote is printed as whole sentences, never cut mid-sentence or ended with an ellipsis. Write teasers as complete sentences within the story's "teaserMaxChars"; the server rejects longer ones rather than cutting them. Articles without photos suit "text-columns", "half-page-ad" and "quarter-page-ad".
 - Avoid blank areas: when a template has two columns, give the story enough text for both, or choose a template with fewer columns.
 - Cover: story 1 is the lead (cover photo and cover line, best from a story with a strong photo); stories 2 to 4 are teasers (headline and a teaser of at most 100 characters), each for a different article than the lead and each other; leave teaser stories out when there are not enough articles. Cover and back-cover stories are teasers only; they do not count as printing the article.
-- Back cover: either feature one article in story 1, or put one ad (full or half page suits best) in its photo frame and write the page "headline" and "intro" (for example a thank-you to local sponsors or an invitation to advertise; never invent contact details).
-- Ads: ${adCount ? "every ad must be placed exactly once, in an ad slot of its size" : "this issue has no ads"}. Full page: "full-page-ad" (or the back cover). Half page: "half-page-ad" or "two-half-page-ads". Quarter page or business card: "quarter-page-ad" or "four-quarter-page-ads". Every ad slot of a chosen template must be filled, and every story of an inner template must have an article.
+- Back cover: feature one article in story 1 (its photo, headline and a teaser). It may be the cover's lead or another article; one with a spare photo suits best.
+- Ads: ${adCount ? "every ad must be placed exactly once, in an ad slot of its size, on an inner page" : "this issue has no ads"}. The front and back covers never carry ads. Full page: "full-page-ad". Half page: "half-page-ad" or "two-half-page-ads". Quarter page or business card: "quarter-page-ad" or "four-quarter-page-ads". Every story of an inner template must have an article, and an ad template needs at least one ad. Fill ad slots with ads where you can; an ad slot left free (for example one half-page ad on "two-half-page-ads" with no second half-page ad) shows an unused photo of an article, so leave one free only while articles still have unused photos.
+
+Fitting text
+- You may edit an article's text so it fits the templates well, like a copy editor working to a page: trim a few lines so it ends in its last column instead of spilling onto another page, tighten wordy passages, or cut less important paragraphs when the article would otherwise need a page of its own for a short remainder. Prefer a layout where articles fill their columns over adding continuation pages for a few dozen words.
+- Submit the article's complete fitted text in "article_edits", in the same Markdown as the original. It replaces the article's text in this issue only; the saved article is unchanged and the team sees every edit.
+- Shorten only; never add facts, quotes, names, numbers or claims, and never change their meaning. Keep the article's voice, its opening, any quotes you keep word for word, and the essential who, what, when and where; keep the contact details, dates and calls to action of sponsored features.
+- Cut as little as the layout needs. Long articles can still continue on later pages; edit when it clearly improves the layout. Cuts of more than half the article are flagged for review.
+- The server's word counts and overflow messages are exact: use them to size each fitted text (the "bodyWords" of the stories it fills, minus the opening shown as the introduction).
 
 Editorial judgement
 - Open the inner pages with the strongest, most local and timely story; vary templates so consecutive pages do not look the same; spread ads through the issue rather than bunching them at the back, and keep an article's continuation close to its start.
@@ -255,7 +299,8 @@ async function buildUserContent(input: ComposerInput) {
     photos: article.imageUrls.length,
     sponsoredStyle: article.sponsoredStyle,
     business: article.businessName,
-    opening: plainTextExcerpt(article.body, 600),
+    // The full text, so the Designer can fit it to the templates.
+    text: article.body,
   }));
   const ads = context.ads.map((ad) => ({
     id: ad.id,
@@ -319,6 +364,8 @@ export async function composeIssueLayout(input: ComposerInput): Promise<Composer
   let lastValid: { plan: CompositionPlan; warnings: string[] } | null = null;
   let warningsShown = false;
   let turns = 0;
+  // The Designer's fitted texts, by article ID; they carry over between submissions.
+  const edits = new Map<string, ArticleEdit>();
 
   for (; turns < MAX_TURNS && !accepted; ) {
     turns += 1;
@@ -378,7 +425,18 @@ export async function composeIssueLayout(input: ComposerInput): Promise<Composer
         });
         continue;
       }
-      const plan = toPlan(parsed.data);
+      for (const edit of parsed.data.article_edits) {
+        if (edit.body === null) {
+          if (edits.delete(edit.article_id)) log("info", `Restored the original text of article ${edit.article_id}`);
+          continue;
+        }
+        edits.set(edit.article_id, { articleId: edit.article_id, body: edit.body.trim(), reason: edit.reason.trim() });
+        const article = context.articles.find((candidate) => candidate.id === edit.article_id);
+        if (article) {
+          log("info", `Fitted "${article.title}": ${countWords(article.body)} → ${countWords(edit.body)} words (${edit.reason.trim() || "no reason given"})`);
+        }
+      }
+      const plan = toPlan(parsed.data, [...edits.values()]);
       lastPlan = plan;
       const { errors, warnings } = composeIssue(plan, context);
       if (errors.length) {
@@ -429,6 +487,14 @@ export async function composeIssueLayout(input: ComposerInput): Promise<Composer
   if (composed.errors.length) {
     throw new Error(`The layout could not be completed: ${composed.errors.slice(0, 3).join(" ")}`);
   }
+  const printed = new Map(applyArticleEdits(plan.articleEdits, context.articles).valid.map((edit) => [edit.articleId, edit]));
+  const textEdits: TextEditSummary[] = context.articles.flatMap((article) => {
+    const edit = printed.get(article.id);
+    return edit
+      ? [{ articleId: article.id, title: article.title, originalWords: countWords(article.body), fittedWords: countWords(edit.body), reason: edit.reason }]
+      : [];
+  });
+  if (textEdits.length) log("info", `The Designer fitted the text of ${textEdits.length} article(s) to the layout; the saved articles are unchanged`);
   const articleCount = new Set(composed.issue.pages.flatMap((page) => (page.type === "INNER" ? page.articleIds : []))).size;
   const adCount = new Set(composed.issue.pages.flatMap((page) => page.adIds)).size;
   log(
@@ -444,6 +510,7 @@ export async function composeIssueLayout(input: ComposerInput): Promise<Composer
     outcome,
     repairs,
     warnings: composed.warnings,
+    textEdits,
     summary: plan.summary,
     pageCount: composed.issue.pages.length,
     articleCount,

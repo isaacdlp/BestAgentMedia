@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { bulkUpdateStatus, type BulkStatusKind } from "@/app/actions/bulk-status";
 import {
   BulkActionBar,
   BulkCheckbox,
@@ -31,12 +32,21 @@ export function RecordDeleteScope({
   noun,
   ids,
   bulk,
+  canDelete = bulk,
+  statusKind,
+  statusOptions,
   children,
 }: {
   apiBase: string;
   noun: string;
   ids: Id[];
+  /** Shows row checkboxes and the action bar. */
   bulk: boolean;
+  /** Shows "Delete selected" in the bar; defaults to `bulk`. */
+  canDelete?: boolean;
+  /** With `statusOptions`, adds a status dropdown that is applied to every selected row. */
+  statusKind?: BulkStatusKind;
+  statusOptions?: Array<{ label: string; value: string }>;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -58,6 +68,18 @@ export function RecordDeleteScope({
     router.refresh();
   }
 
+  async function applyStatus(status: string) {
+    const selected = selection.selectedIds;
+    if (!selected.length || !statusKind) return;
+    setBusy(true);
+    setError(null);
+    const { updated, failed, message } = await bulkUpdateStatus(statusKind, selected, status);
+    setBusy(false);
+    setError(failed ? `${plural(updated)} updated, ${failed} failed${message ? `: ${message}` : "."}` : null);
+    if (!failed) selection.clear();
+    router.refresh();
+  }
+
   return (
     <RecordDeleteContext.Provider
       value={{ bulk, busy, isSelected: selection.isSelected, toggle: selection.toggle }}
@@ -67,7 +89,9 @@ export function RecordDeleteScope({
           allSelected={selection.allSelected}
           busy={busy}
           count={selection.selectedIds.length}
-          onDelete={() => void deleteSelected()}
+          onApplyStatus={statusKind && statusOptions ? (status) => void applyStatus(status) : undefined}
+          onDelete={canDelete ? () => void deleteSelected() : undefined}
+          statusOptions={statusKind ? statusOptions : undefined}
           onToggleAll={selection.toggleAll}
           someSelected={selection.someSelected}
         />

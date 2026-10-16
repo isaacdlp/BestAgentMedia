@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { UserRole } from "@prisma/client";
-import { updateSubmissionStatus } from "@/app/actions/records";
 import { requireUser } from "@/lib/auth";
 import { getSubmissionScope } from "@/lib/access";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -10,6 +9,14 @@ import { ListPagination } from "@/components/list-pagination";
 import { RecordDeleteScope, RecordSelectCell, RecordSelectHead } from "@/components/record-delete";
 import { parseListParams } from "@/lib/list-params";
 import { prisma } from "@/lib/db";
+
+const STATUS_OPTIONS = [
+  { label: "Draft", value: "DRAFT" },
+  { label: "In review", value: "IN_REVIEW" },
+  { label: "Needs information", value: "NEEDS_INFORMATION" },
+  { label: "Accepted", value: "ACCEPTED" },
+  { label: "Declined", value: "DECLINED" },
+];
 
 const SORT_OPTIONS = [
   { label: "Updated", value: "updatedAt" },
@@ -63,6 +70,7 @@ export default async function SubmissionsPage({
     }),
     prisma.contentSubmission.count({ where }),
   ]);
+
   const canManage = user.role === UserRole.ADMIN || user.role === UserRole.EDITOR;
 
   return (
@@ -85,14 +93,17 @@ export default async function SubmissionsPage({
         {submissions.length ? (
           <RecordDeleteScope
             apiBase="/api/submissions"
-            bulk={user.role === UserRole.ADMIN}
+            bulk={canManage}
+            canDelete={user.role === UserRole.ADMIN}
+            statusKind="submission"
+            statusOptions={STATUS_OPTIONS}
             ids={submissions.map((submission) => submission.id)}
             noun="submission"
           >
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><RecordSelectHead bulk={user.role === UserRole.ADMIN} /><th>Story</th><th>Publication</th><th>Submitted by</th><th>Status</th><th>Updated</th>{canManage ? <th>Review</th> : null}</tr>
+                <tr><RecordSelectHead bulk={canManage} /><th>Story</th><th>Publication</th><th>Submitted by</th><th>Status</th><th>Updated</th></tr>
               </thead>
               <tbody>
                 {submissions.map((submission) => (
@@ -105,21 +116,7 @@ export default async function SubmissionsPage({
                     <td>{submission.submitterName ?? "—"}</td>
                     <td><span className="status-pill">{formatStatus(submission.status)}</span></td>
                     <td>{submission.updatedAt.toLocaleDateString()}</td>
-                    {canManage ? (
-                      <td>
-                        <form action={updateSubmissionStatus} className="inline-edit">
-                          <input name="id" type="hidden" value={submission.id} />
-                          <select aria-label={`Update ${submission.title} status`} defaultValue={submission.status} name="status">
-                            <option value="DRAFT">Draft</option>
-                            <option value="IN_REVIEW">In review</option>
-                            <option value="ACCEPTED">Accepted</option>
-                            <option value="DECLINED">Declined</option>
-                          </select>
-                          <button className="button button-small" type="submit">Save</button>
-                        </form>
-                      </td>
-                    ) : null}
-</tr>
+                  </tr>
                 ))}
               </tbody>
             </table>

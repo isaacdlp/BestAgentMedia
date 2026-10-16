@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AgentBadge } from "@/components/agent-badge";
 import { announceTaskStarted, type LaunchedTask } from "@/lib/task-events";
-import type { LayoutDesign, LayoutElement, LayoutPage } from "@/lib/issue-design";
-import type { ComposedIssue, ComposedPage, ComposedSlot } from "@/lib/issue-composition";
-import { findIssuePageTemplate, TEMPLATE_REFERENCE_HEIGHT, TEMPLATE_REFERENCE_WIDTH, type TemplateSlot } from "@/lib/issue-templates";
+import type { LayoutDesign } from "@/lib/issue-design";
+import type { ComposedIssue } from "@/lib/issue-composition";
+import { findIssuePageTemplate } from "@/lib/issue-templates";
 import { diffWords, type DiffSegment } from "@/lib/text-diff";
 
 // ---------------------------------------------------------------------------
@@ -262,140 +263,47 @@ export function CreativeTaskView({
 // Designer (layout generation)
 // ---------------------------------------------------------------------------
 
-const PREVIEW_WIDTH = 230;
+// The proposal is shown in a read-only CreativeEditor canvas built exactly as the issue editor
+// builds it on apply, so positions, typefaces and crops match the applied layout.
+const LayoutSceneViewer = dynamic(
+  () => import("@/components/layout-scene-viewer").then((module) => module.LayoutSceneViewer),
+  { ssr: false, loading: () => <div className="empty-state">Loading CreativeEditor…</div> },
+);
 
-function numberValue(value: unknown, fallback = 0) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function PreviewElement({ element }: { element: LayoutElement }) {
-  const style: CSSProperties = {
-    left: numberValue(element.x),
-    top: numberValue(element.y),
-    width: numberValue(element.width, 100),
-    height: numberValue(element.height, 40),
-  };
-  if (element.type === "image" && typeof element.src === "string") {
-    return <img alt="" className="layout-preview-image" src={element.src} style={style} />;
-  }
-  return (
-    <div
-      className="layout-preview-text"
-      style={{
-        ...style,
-        color: typeof element.fill === "string" ? element.fill : "#202a37",
-        fontSize: numberValue(element.fontSize, 16),
-        fontStyle: element.fontStyle === "italic" ? "italic" : "normal",
-        fontWeight: element.fontWeight === "bold" ? 700 : 400,
-        textAlign: element.align === "center" || element.align === "right" ? element.align : "left",
-      }}
-    >
-      {typeof element.text === "string" ? element.text : ""}
-    </div>
-  );
-}
-
-function pageLabel(page: LayoutPage, index: number, count: number) {
-  const meta = (page.custom?.bestAgentMedia ?? {}) as { pageType?: string };
-  if (meta.pageType === "COVER" || index === 0) return "Cover";
-  if (meta.pageType === "BACK_COVER" || index === count - 1) return "Back cover";
+function pageLabel(index: number, count: number) {
+  if (index === 0) return "Cover";
+  if (index === count - 1) return "Back cover";
   return `Page ${index + 1}`;
 }
 
-// Composed layouts (Designer composition): each page is drawn from its template's slot frames
-// with the composed text, photos and ad artwork.
 export type CompositionSummary = {
   summary?: string;
   model?: string;
   outcome?: "designer" | "repaired" | "fallback";
   repairs?: string[];
   warnings?: string[];
+  // Articles whose text the Designer shortened for this layout (the saved articles are unchanged).
+  textEdits?: { articleId: string; title: string; originalWords: number; fittedWords: number; reason: string }[];
   instructions?: string;
   articleCount?: number;
   adCount?: number;
 };
 
-const SERIF_STACK = "Merriweather, 'Source Serif Pro', Georgia, serif";
-
-function ComposedSlotPreview({ slot, content }: { slot: TemplateSlot; content: ComposedSlot | undefined }) {
-  const { x, y, width, height } = slot.frame;
-  const box: CSSProperties = { left: x, top: y, width, height };
-  if (slot.kind === "rect") return <div className="layout-preview-shape" style={{ ...box, background: slot.color }} />;
-  if (!content || content.kind === "omit") return null;
-  if (content.kind === "image") {
-    const isAd = slot.role === "ad" || content.fit === "Contain";
-    if (!content.src) {
-      return <div className={`layout-preview-placeholder${isAd ? " is-ad" : ""}`} style={box}>{isAd ? "AD" : "PHOTO"}</div>;
-    }
-    return (
-      <img
-        alt={content.link?.title ?? ""}
-        className="layout-preview-image"
-        src={content.src}
-        style={{ ...box, objectFit: content.fit === "Contain" ? "contain" : "cover" }}
-      />
-    );
-  }
-  if (slot.kind !== "text") return null;
-  return (
-    <div
-      className="layout-preview-text"
-      style={{
-        ...box,
-        color: slot.color,
-        fontFamily: SERIF_STACK,
-        fontSize: slot.fontSize,
-        fontWeight: slot.bold ? 700 : 400,
-        lineHeight: slot.lineHeight ?? 1.25,
-        textAlign: slot.align === "Justify" ? "justify" : (slot.align.toLowerCase() as "left" | "center" | "right"),
-        display: slot.verticalAlign && slot.verticalAlign !== "Top" ? "flex" : undefined,
-        flexDirection: "column",
-        justifyContent: slot.verticalAlign === "Center" ? "center" : slot.verticalAlign === "Bottom" ? "flex-end" : undefined,
-      }}
-    >
-      {content.text}
-    </div>
-  );
-}
-
-function ComposedPagePreview({ page, scale }: { page: ComposedPage; scale: number }) {
-  const template = findIssuePageTemplate(page.templateId);
-  const content = new Map(page.slots.map((slot) => [slot.slotId, slot]));
-  return (
-    <div
-      className="layout-preview-canvas"
-      style={{
-        width: TEMPLATE_REFERENCE_WIDTH,
-        height: TEMPLATE_REFERENCE_HEIGHT,
-        background: template?.background ?? "#fff",
-        transform: `scale(${scale})`,
-      }}
-    >
-      {template?.slots.map((slot) => <ComposedSlotPreview content={content.get(slot.id)} key={slot.id} slot={slot} />)}
-    </div>
-  );
-}
-
-const COMPOSED_PREVIEW_WIDTH = 260;
-
-function ComposedPages({ composition }: { composition: ComposedIssue }) {
-  const scale = COMPOSED_PREVIEW_WIDTH / TEMPLATE_REFERENCE_WIDTH;
+function ComposedPageNotes({ composition }: { composition: ComposedIssue }) {
   const count = composition.pages.length;
   return (
-    <div className="layout-preview-grid">
-      {composition.pages.map((page, index) => (
-        <figure className="layout-preview-page layout-preview-composed" key={index}>
-          <div className="layout-preview-frame" style={{ width: COMPOSED_PREVIEW_WIDTH, height: TEMPLATE_REFERENCE_HEIGHT * scale }}>
-            <ComposedPagePreview page={page} scale={scale} />
-          </div>
-          <figcaption>
-            {index === 0 ? "Cover" : index === count - 1 ? "Back cover" : `Page ${index + 1}`}
-            <span className="layout-preview-template"> · {findIssuePageTemplate(page.templateId)?.name ?? page.templateId}</span>
-            {page.note ? <span className="layout-preview-note">{page.note}</span> : null}
-          </figcaption>
-        </figure>
-      ))}
-    </div>
+    <details className="layout-composition-notes">
+      <summary>Page plan ({count} pages)</summary>
+      <ol className="layout-page-notes">
+        {composition.pages.map((page, index) => (
+          <li key={index}>
+            <strong>{pageLabel(index, count)}</strong>
+            <span className="muted"> · {findIssuePageTemplate(page.templateId)?.name ?? page.templateId}</span>
+            {page.note ? <span> · {page.note}</span> : null}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
@@ -427,9 +335,6 @@ export function LayoutTaskView({
   const router = useRouter();
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
-  const width = numberValue(design?.width, 816);
-  const height = numberValue(design?.height, 1056);
-  const scale = PREVIEW_WIDTH / width;
   const pages = Array.isArray(design?.pages) ? design.pages : [];
 
   async function applyToIssue() {
@@ -461,8 +366,9 @@ export function LayoutTaskView({
         </div>
       </div>
       <p className="muted task-review-status">
-        This is a proposal. The issue is unchanged until you apply it; the layout then opens in the
-        editor, where every text and image stays editable.
+        This is a proposal, shown below in a read-only CreativeEditor view exactly as it will be laid
+        out. The issue is unchanged until you apply it; the layout then opens in the editor, where
+        every text and image stays editable.
       </p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {composition ? (
@@ -485,38 +391,32 @@ export function LayoutTaskView({
                 <ul>{details.repairs.map((item) => <li key={item}>{item}</li>)}</ul>
               </details>
             ) : null}
+            {details.textEdits?.length ? (
+              <details className="layout-composition-notes" open>
+                <summary>Text fitted by the Designer ({details.textEdits.length})</summary>
+                <ul>
+                  {details.textEdits.map((edit) => (
+                    <li key={edit.articleId}>
+                      <Link className="text-link" href={`/articles/${edit.articleId}`}>{edit.title}</Link>: {edit.originalWords} → {edit.fittedWords} words
+                      {edit.reason ? ` · ${edit.reason}` : ""}
+                    </li>
+                  ))}
+                </ul>
+                <p className="muted">Only this layout uses the shortened text; the saved articles are unchanged.</p>
+              </details>
+            ) : null}
             {details.warnings?.length ? (
               <details className="layout-composition-notes">
                 <summary>Check before printing ({details.warnings.length})</summary>
                 <ul>{details.warnings.map((item) => <li key={item}>{item}</li>)}</ul>
               </details>
             ) : null}
+            <ComposedPageNotes composition={composition} />
           </div>
-          <ComposedPages composition={composition} />
+          <LayoutSceneViewer composition={composition} design={null} />
         </>
       ) : pages.length ? (
-        <div className="layout-preview-grid">
-          {pages.map((page, index) => (
-            <figure className="layout-preview-page" key={page.id ?? index}>
-              <div className="layout-preview-frame" style={{ width: width * scale, height: height * scale }}>
-                <div
-                  className="layout-preview-canvas"
-                  style={{
-                    width,
-                    height,
-                    background: typeof page.background === "string" ? page.background : "#fff",
-                    transform: `scale(${scale})`,
-                  }}
-                >
-                  {(page.children ?? []).map((element, elementIndex) => (
-                    <PreviewElement element={element} key={element.id ?? elementIndex} />
-                  ))}
-                </div>
-              </div>
-              <figcaption>{pageLabel(page, index, pages.length)}</figcaption>
-            </figure>
-          ))}
-        </div>
+        <LayoutSceneViewer composition={null} design={design} />
       ) : (
         <div className="empty-state">This task has no stored layout.</div>
       )}

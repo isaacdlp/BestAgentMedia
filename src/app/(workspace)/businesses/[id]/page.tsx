@@ -7,7 +7,6 @@ import { deleteBusinessImage } from "@/app/actions/ads";
 import { BusinessCategoryPicker } from "@/components/business-category-picker";
 import { BusinessLocationMap } from "@/components/business-location-map";
 import { OnboardButton } from "@/components/onboard-button";
-import { PitchButton } from "@/components/pitch-button";
 import { BusinessImagesForm } from "./business-images-form";
 import { ImportImagesButton } from "./import-images-button";
 import { requireUser } from "@/lib/auth";
@@ -72,10 +71,20 @@ export default async function BusinessDetailPage({
           <h1>{business.name}</h1>
           <p className="muted">Business details, source information, and exact mapped coordinates.</p>
         </div>
+        {isAdmin ? (
+          <div className="page-heading-status">
+            <span className="role-pill">{business.sourceProvider.toLowerCase()}</span>
+          </div>
+        ) : null}
         <div className="page-heading-actions">
-          {isAdmin ? <span className="role-pill">{business.sourceProvider.toLowerCase()}</span> : null}
           {isAdmin && marketerAgent?.enabled && business.email ? (
-            <PitchButton businessId={business.id} />
+            <Link
+              className="button button-secondary"
+              href={`/businesses/promote/new?business=${business.id}`}
+              title="Sell this business paid promotions in an upcoming issue."
+            >
+              Promote
+            </Link>
           ) : null}
           {isAdmin && business.email ? (
             <OnboardButton
@@ -83,15 +92,6 @@ export default async function BusinessDetailPage({
               claimed={business.ownerUserId !== null}
               hasEmail
             />
-          ) : null}
-          {isAdmin && marketerAgent?.enabled && business.email ? (
-            <Link
-              className="button button-primary"
-              href={`/businesses/promote/new?business=${business.id}`}
-              title="Sell this business paid promotions in an upcoming issue."
-            >
-              Promote
-            </Link>
           ) : null}
         </div>
       </div>
@@ -133,7 +133,7 @@ export default async function BusinessDetailPage({
                   <BusinessField label="City" name="city" value={business.city} />
                   <BusinessField label="State" name="state" value={business.state} />
                   <BusinessField label="State code" name="stateCode" value={business.stateCode} />
-                  <BusinessField label="Postal code" name="postalCode" value={business.postalCode} />
+                  <BusinessField label="Postal code" name="postalCode" pattern="[0-9]{5}" value={business.postalCode} />
                   <BusinessField label="Country code" name="countryCode" value={business.countryCode} />
                   <BusinessField label="Latitude" name="latitude" step="any" type="number" value={business.latitude} />
                   <BusinessField label="Longitude" name="longitude" step="any" type="number" value={business.longitude} />
@@ -240,15 +240,16 @@ type BusinessFieldProps = {
   name: string;
   required?: boolean;
   step?: string;
+  pattern?: string;
   type?: "email" | "number" | "tel" | "text" | "url" | "datetime-local";
   value: string | number | null;
 };
 
-function BusinessField({ label, name, required = false, step, type = "text", value }: BusinessFieldProps) {
+function BusinessField({ label, name, pattern, required = false, step, type = "text", value }: BusinessFieldProps) {
   return (
     <label className="business-field">
       <span>{label}</span>
-      <input name={name} required={required} step={step} type={type} defaultValue={value ?? ""} />
+      <input name={name} pattern={pattern} title={pattern ? "Exactly 5 digits" : undefined} inputMode={pattern ? "numeric" : undefined} maxLength={pattern ? 5 : undefined} required={required} step={step} type={type} defaultValue={value ?? ""} />
     </label>
   );
 }

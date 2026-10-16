@@ -104,8 +104,10 @@ export default async function BusinessesPage({
             {filteredPublication ? <> <Link className="text-link" href="/businesses">Show all</Link></> : null}
           </p>
         </div>
-        <div className="page-heading-actions">
+        <div className="page-heading-status">
           <span className="role-pill">{total} businesses</span>
+        </div>
+        <div className="page-heading-actions">
           {isAdmin ? <Link className="button button-secondary" href="/businesses/import/new">Import</Link> : null}
           {isAdmin ? <Link className="button button-secondary" href="/businesses/reachout/new">Onboard</Link> : null}
           {isAdmin ? <Link className="button button-secondary" href="/businesses/promote/new">Promote</Link> : null}

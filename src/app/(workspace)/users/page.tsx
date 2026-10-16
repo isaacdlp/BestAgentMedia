@@ -76,7 +76,7 @@ export default async function UsersPage({
           <h1>Users</h1>
           <p className="muted">Review workspace accounts and publication access.</p>
         </div>
-        <span className="role-pill">{total} users</span>
+        <div className="page-heading-status"><span className="role-pill">{total} users</span></div>
       </div>
       <section className="panel table-panel">
         <div className="panel-heading">

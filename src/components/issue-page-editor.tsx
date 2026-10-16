@@ -763,7 +763,7 @@ export function IssuePageEditor({
               "Lead with the most local, timely story",
               "Spread the ads evenly through the issue",
               "Keep each article on as few pages as possible",
-              "Put a full-page ad on the back cover",
+              "Feature the strongest photo story on the back cover",
             ]}
           />
           <button

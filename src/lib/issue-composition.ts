@@ -11,7 +11,7 @@ import { DEFAULT_PAGE_HEIGHT, DEFAULT_PAGE_WIDTH, type ContentSourceType, type I
 import {
   columnWordCapacity,
   findIssuePageTemplate,
-  fitSlotText,
+  fitSentences,
   flowTextWithRest,
   isAdSlot,
   isContentSlot,
@@ -21,6 +21,7 @@ import {
   plainTextExcerpt,
   pullQuoteText,
   slotStory,
+  slotTextLimit,
   type IssuePageTemplate,
   type TemplateIssueInfo,
   type TemplateSlot,
@@ -71,12 +72,13 @@ export type PlanPage = {
   templateId: string;
   stories: PlanStory[];
   adIds: string[];
-  // Headline and introduction for a page that shows them without an article (a back cover with an ad).
-  headline: string | null;
-  intro: string | null;
   note: string;
 };
-export type CompositionPlan = { summary: string; pages: PlanPage[] };
+// A shortened or tightened version of an article's text, written by the Designer so the article
+// fits the chosen templates. It replaces the article's body in this layout only; the saved article
+// is unchanged.
+export type ArticleEdit = { articleId: string; body: string; reason: string };
+export type CompositionPlan = { summary: string; pages: PlanPage[]; articleEdits?: ArticleEdit[] };
 
 export type SlotLink = { sourceType: ContentSourceType; sourceId: string; title: string };
 export type ComposedSlot =
@@ -132,6 +134,55 @@ function paragraphsWords(paragraphs: RichParagraph[]) {
   return paragraphs.reduce((sum, paragraph) => sum + countWords(paragraph.text), 0);
 }
 
+// Edits that cut more than this share of an article are allowed but flagged for review.
+const LARGE_CUT_SHARE = 0.5;
+
+/**
+ * Checks the Designer's text edits: each must name a known article once, keep some text and be no
+ * longer than the original (edits fit text to the page; they never add to it). Returns the
+ * articles as the layout prints them, with valid edits applied.
+ */
+export function applyArticleEdits(edits: ArticleEdit[] | undefined, articles: CompositionArticle[]) {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const byId = new Map(articles.map((article) => [article.id, article]));
+  const valid: ArticleEdit[] = [];
+  const seen = new Set<string>();
+  for (const edit of edits ?? []) {
+    const article = byId.get(edit.articleId);
+    if (!article) {
+      errors.push(`Text edit for unknown article ID "${edit.articleId}".`);
+      continue;
+    }
+    if (seen.has(article.id)) {
+      errors.push(`"${article.title}" has more than one text edit; submit one fitted text per article.`);
+      continue;
+    }
+    seen.add(article.id);
+    const original = countWords(article.body);
+    const fitted = countWords(edit.body);
+    if (!fitted) {
+      errors.push(`The fitted text of "${article.title}" is empty; every article must still be printed.`);
+      continue;
+    }
+    if (fitted > original) {
+      errors.push(`The fitted text of "${article.title}" has ${fitted} words, more than the original ${original}; text edits may only shorten or tighten an article.`);
+      continue;
+    }
+    if (fitted < original * (1 - LARGE_CUT_SHARE)) {
+      warnings.push(`"${article.title}" was cut from ${original} to ${fitted} words to fit the layout; check that nothing important was lost.`);
+    }
+    valid.push(edit);
+  }
+  const fittedBodies = new Map(valid.map((edit) => [edit.articleId, edit.body]));
+  return {
+    articles: articles.map((article) => (fittedBodies.has(article.id) ? { ...article, body: fittedBodies.get(article.id) as string } : article)),
+    valid,
+    errors,
+    warnings,
+  };
+}
+
 // The size class an ad slot is made for, from its frame on the reference page.
 export function adSlotSize(slot: TemplateSlot): AdSize {
   if (slot.frame.width >= 800) return "full";
@@ -139,8 +190,7 @@ export function adSlotSize(slot: TemplateSlot): AdSize {
   return "quarter";
 }
 
-function acceptsAdSize(slotSize: AdSize | "back-cover", size: AdSize) {
-  if (slotSize === "back-cover") return size === "full" || size === "half";
+function acceptsAdSize(slotSize: AdSize, size: AdSize) {
   if (slotSize === "quarter") return size === "quarter" || size === "eighth";
   return slotSize === size;
 }
@@ -217,7 +267,11 @@ export function composeIssue(
   const warnings: string[] = [];
   // Gaps a repaired plan may keep: the slots are left off the page instead.
   const gap = (message: string) => (strict ? errors : warnings).push(message);
-  const articles = new Map(context.articles.map((article) => [article.id, article]));
+  // Articles as printed: the Designer's fitted texts replace the original bodies.
+  const edited = applyArticleEdits(plan.articleEdits, context.articles);
+  errors.push(...edited.errors);
+  warnings.push(...edited.warnings);
+  const articles = new Map(edited.articles.map((article) => [article.id, article]));
   const ads = new Map(context.ads.map((ad) => [ad.id, ad]));
   const states = new Map<string, ArticleState>();
   const state = (article: CompositionArticle) => {
@@ -325,10 +379,10 @@ export function composeIssue(
         current.started = true;
         current.firstPage = pageNumber;
         // The introduction or caption shows the opening paragraph, so the body starts after it.
-        const showsIntro = slots.some((slot) => slot.role === "subtitle" || slot.role === "caption");
+        const introSlot = slots.find((slot): slot is TemplateTextSlot => slot.kind === "text" && (slot.role === "subtitle" || slot.role === "caption"));
         const textParagraphs = current.remaining.filter((paragraph) => !paragraph.heading);
         const intro = textParagraphs[0];
-        if (showsIntro && intro && textParagraphs.length > 1 && plainTextExcerpt(article.body) === intro.text) {
+        if (introSlot && !entry.teaser?.trim() && intro && textParagraphs.length > 1 && plainTextExcerpt(article.body, slotTextLimit(introSlot)) === intro.text) {
           current.remaining = current.remaining.filter((paragraph) => paragraph !== intro);
         }
       }
@@ -351,12 +405,19 @@ export function composeIssue(
         if (slot.role === "title") {
           text = entry.headline?.trim() || (continuation ? `${article.title} (continued)` : article.title);
         } else if (slot.role === "subtitle" || slot.role === "caption") {
+          const limit = slotTextLimit(slot);
+          const teaserText = entry.teaser?.trim();
+          if (teaserText && teaserText.length > limit) {
+            // Teasers are printed whole, so one that is too long is sent back instead of being cut.
+            gap(`${where}: the teaser for "${article.title}" has ${teaserText.length} characters but story ${entry.story}'s frame holds ${limit}; write a shorter teaser of complete sentences.`);
+          }
           text = continuation
             ? `Continued from page ${current.firstPage}`
-            : fitSlotText(slot, entry.teaser?.trim() || plainTextExcerpt(article.body, slot.maxChars ?? 220));
+            : fitSentences(teaserText || plainTextExcerpt(article.body, limit), limit);
         } else if (slot.role === "quote") {
           text = !current.quoteUsed || !current.remaining.length ? pullQuoteText(article.body) : pullQuoteText(plainText(current.remaining));
           current.quoteUsed = true;
+          if (!text) continue;
         } else {
           continue;
         }
@@ -392,61 +453,41 @@ export function composeIssue(
 
     for (const story of stories) {
       if (filledStories.has(story)) continue;
-      const pageHeadline = page.headline?.trim();
-      const isBackStory = isBack && story === 1 && (page.adIds.length > 0 || pageHeadline);
       // Cover teasers are optional: an issue with few articles shows fewer of them.
-      const optionalTeaser = isCover && story > 1;
-      if (!isBackStory && !optionalTeaser) {
-        gap(`${where}: story ${story} of "${template.id}" has no article; fill it or pick a template with fewer stories.`);
-      }
+      if (isCover && story > 1) continue;
+      gap(`${where}: story ${story} of "${template.id}" has no article; fill it or pick a template with fewer stories.`);
     }
 
-    // Ads go into the ad slots in order; the back cover shows one ad in its photo frame.
-    const adSlots: { slot: TemplateSlot; size: AdSize | "back-cover" }[] = template.slots.filter(isAdSlot).map((slot) => ({ slot, size: adSlotSize(slot) }));
-    if (isBack && !adSlots.length) {
-      const photo = template.slots.find((slot) => slot.kind === "image" && slotStory(slot) === 1);
-      if (photo && page.adIds.length) {
-        if (filledStories.has(1)) errors.push(`${where}: the back cover shows either a featured story or an ad in its photo frame, not both.`);
-        adSlots.push({ slot: photo, size: "back-cover" });
-      }
-    }
+    // Ads go into the ad slots of inner pages, in order; the covers never carry ads.
+    const adSlots = template.slots.filter(isAdSlot).map((slot) => ({ slot, size: adSlotSize(slot) }));
     const pageAds: string[] = [];
-    if (page.adIds.length > adSlots.length) {
+    if ((isCover || isBack) && page.adIds.length) {
+      errors.push(`${where}: the ${isCover ? "front" : "back"} cover never carries ads; place them on inner pages.`);
+    } else if (page.adIds.length > adSlots.length) {
       errors.push(`${where}: ${page.adIds.length} ads assigned but "${template.id}" has ${adSlots.length} ad slot(s).`);
+    }
+    if (adSlots.length && !page.adIds.length) {
+      gap(`${where}: "${template.id}" is an ad template but no ad is assigned to it.`);
     }
     for (const [adIndex, { slot, size }] of adSlots.entries()) {
       const adId = page.adIds[adIndex];
       const ad = adId ? ads.get(adId) : undefined;
       if (adId && !ad) errors.push(`${where}: unknown ad ID "${adId}".`);
       if (!ad) {
-        if (!adId) gap(`${where}: ad slot ${adIndex + 1} of "${template.id}" is empty; every ad slot needs an ad.`);
+        // A free ad slot next to the page's ads (one half-page ad on "two-half-page-ads", say)
+        // shows an unused article photo; it is filled after every story photo.
         resolved.set(slot.id, { slotId: slot.id, kind: "omit" });
-        pendingFills.push({ pageIndex: index, slotId: slot.id, priority: 1, article: null, ad: null });
+        pendingFills.push({ pageIndex: index, slotId: slot.id, priority: 2, article: null, ad: null });
         continue;
       }
       if (placedAds.has(ad.id)) errors.push(`${where}: ad "${ad.title}" is already placed on page ${placedAds.get(ad.id)}.`);
       placedAds.set(ad.id, pageNumber);
       pageAds.push(ad.id);
       if (!acceptsAdSize(size, ad.size)) {
-        warnings.push(`${where}: "${ad.title}" is a ${ad.sizeLabel} ad in a ${size === "back-cover" ? "back-cover" : size} slot; its artwork is scaled to fit.`);
+        warnings.push(`${where}: "${ad.title}" is a ${ad.sizeLabel} ad in a ${size} slot; its artwork is scaled to fit.`);
       }
       resolved.set(slot.id, { slotId: slot.id, kind: "image", src: ad.imageUrl, fit: "Contain", link: adLink(ad) });
       if (!ad.imageUrl) pendingFills.push({ pageIndex: index, slotId: slot.id, priority: 1, article: null, ad });
-    }
-
-    // A back cover without a featured story takes its headline and introduction from the page.
-    if (isBack && !filledStories.has(1)) {
-      const firstAd = ads.get(pageAds[0] ?? "");
-      for (const slot of template.slots.filter((candidate) => isContentSlot(candidate) && slotStory(candidate) === 1)) {
-        if (slot.kind !== "text" || resolved.has(slot.id)) continue;
-        const text =
-          slot.role === "title"
-            ? page.headline?.trim() || firstAd?.businessName
-            : slot.role === "subtitle" || slot.role === "caption"
-              ? page.intro?.trim() || firstAd?.title
-              : undefined;
-        if (text) resolved.set(slot.id, { slotId: slot.id, kind: "text", text: fitSlotText(slot, text) });
-      }
     }
 
     const slots: ComposedSlot[] = template.slots
@@ -467,7 +508,7 @@ export function composeIssue(
   // repeated.
   const pickPhoto = (preferIds: string[]) => {
     const preferred = preferIds.flatMap((id) => (articles.get(id) ? [articles.get(id) as CompositionArticle] : []));
-    const others = context.articles
+    const others = edited.articles
       .filter((article) => !preferIds.includes(article.id))
       .sort(
         (a, b) =>
@@ -488,8 +529,13 @@ export function composeIssue(
     const where = `Page ${fill.pageIndex + 1}`;
     const page = pages[fill.pageIndex];
     const subject = fill.ad ? `the ad "${fill.ad.title}"` : fill.article ? `"${fill.article.title}"` : "an empty slot";
+    const freeAdSlot = !fill.ad && !fill.article;
     const found = pickPhoto([...(fill.article ? [fill.article.id] : []), ...page.articleIds]);
     const slotIndex = page.slots.findIndex((slot) => slot.slotId === fill.slotId);
+    if (freeAdSlot && (!found || found.repeated)) {
+      gap(`${where}: ad slot "${fill.slotId}" has no ad and no unused article photo is left for it; pick a template with fewer ad slots.`);
+      if (!found) continue;
+    }
     if (!found || slotIndex < 0) {
       warnings.push(
         fill.ad
@@ -507,18 +553,20 @@ export function composeIssue(
       );
     } else if (found.repeated) {
       warnings.push(`${where}: no unused photo was left for ${subject}, so a photo already used elsewhere is repeated.`);
+    } else if (freeAdSlot) {
+      warnings.push(`${where}: the free ad slot "${fill.slotId}" shows an unused photo of "${found.article.title}".`);
     } else if (source) {
       warnings.push(`${where}: ${subject} has no photo left, so its slot uses an unused photo${source}.`);
     }
   }
 
-  for (const article of context.articles) {
+  for (const article of edited.articles) {
     const current = states.get(article.id);
     if (!current?.started) {
       errors.push(`Article "${article.title}" (${article.id}) is not placed on any inner page.`);
     } else if (current.remaining.length) {
       errors.push(
-        `Article "${article.title}" (${article.id}) still has about ${paragraphsWords(current.remaining)} words left after its last page (page ${current.lastBodyPage}); continue it on later pages (for example story 0 of "two-stories" or a "text-columns" page).`,
+        `Article "${article.title}" (${article.id}) still has about ${paragraphsWords(current.remaining)} words left after its last page (page ${current.lastBodyPage}); continue it on later pages (for example story 0 of "two-stories" or a "text-columns" page), or shorten its fitted text.`,
       );
     }
   }
@@ -542,7 +590,7 @@ export function composeIssue(
 }
 
 function blankPage(type: IssuePageType, templateId: string, note: string): PlanPage {
-  return { type, templateId, stories: [], adIds: [], headline: null, intro: null, note };
+  return { type, templateId, stories: [], adIds: [], note };
 }
 
 /**
@@ -579,7 +627,8 @@ export function repairPlan(plan: CompositionPlan, context: CompositionContext): 
       else changes.push(`Dropped an invalid story assignment (${entry.articleId}, story ${entry.story}).`);
       return ok;
     });
-    const capacity = chosen.slots.filter(isAdSlot).length || (page.type === "BACK_COVER" ? 1 : 0);
+    // The covers have no ad slots, so ads planned there move to added ad pages.
+    const capacity = chosen.slots.filter(isAdSlot).length;
     const adIds = page.adIds.filter((id) => {
       const ok = ads.has(id) && !usedAds.has(id);
       if (ok) usedAds.add(id);
@@ -587,12 +636,29 @@ export function repairPlan(plan: CompositionPlan, context: CompositionContext): 
     });
     const kept = adIds.slice(0, capacity);
     for (const id of adIds.slice(capacity)) usedAds.delete(id);
-    if (page.type === "BACK_COVER" && kept.length && storyEntries.some((entry) => entry.story === 1)) {
-      changes.push("Moved the back-cover story off the ad's photo frame.");
-      return { ...page, templateId, stories: storyEntries.filter((entry) => entry.story !== 1), adIds: kept };
-    }
+    if (page.type !== "INNER" && adIds.length) changes.push(`Moved the ads planned on the ${page.type === "COVER" ? "front" : "back"} cover to inner pages.`);
     return { ...page, templateId, stories: storyEntries, adIds: kept };
   });
+
+  // Ad pages left without any ad or story are dropped.
+  pages = pages.filter((page) => {
+    const template = findIssuePageTemplate(page.templateId);
+    const empty = page.type === "INNER" && !page.adIds.length && !page.stories.length && !!template?.slots.some(isAdSlot);
+    if (empty) changes.push(`Removed an ad page ("${page.templateId}") that had no ads.`);
+    return !empty;
+  });
+
+  // Both covers feature an article in story 1: the one with the most photos that the other
+  // cover does not already lead.
+  const byPhotos = [...context.articles].sort((a, b) => b.imageUrls.length - a.imageUrls.length);
+  for (const index of [0, pages.length - 1]) {
+    const page = pages[index];
+    if (page.stories.some((entry) => entry.story === 1) || !byPhotos.length) continue;
+    const other = pages[index === 0 ? pages.length - 1 : 0].stories.find((entry) => entry.story === 1)?.articleId;
+    const article = byPhotos.find((candidate) => candidate.id !== other) ?? byPhotos[0];
+    pages[index] = { ...page, stories: [{ story: 1, articleId: article.id, headline: null, teaser: null }, ...page.stories] };
+    changes.push(`Featured "${article.title}" on the ${index === 0 ? "front" : "back"} cover.`);
+  }
 
   // Ads the plan left out get ad pages of their size, before the back cover.
   const missingAds = context.ads.filter((ad) => !usedAds.has(ad.id));
@@ -619,8 +685,12 @@ export function repairPlan(plan: CompositionPlan, context: CompositionContext): 
     changes.push(`Added a page for "${article.title}".`);
   }
 
+  // Only valid text edits are kept; the others fall back to the article's original text.
+  const edits = applyArticleEdits(plan.articleEdits, context.articles);
+  for (const error of edits.errors) changes.push(`Ignored a text edit: ${error}`);
+
   // Text that does not fit continues on added text pages right after the article's last page.
-  let candidate: CompositionPlan = { summary: plan.summary, pages };
+  let candidate: CompositionPlan = { summary: plan.summary, pages, articleEdits: edits.valid };
   for (let round = 0; round < 80; round += 1) {
     const { errors } = composeIssue(candidate, context, { strict: false });
     const overflow = errors

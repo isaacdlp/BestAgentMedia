@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { ZIP_CODE_PATTERN } from "@/lib/postal-code";
 
 const optionalText = z.preprocess(
   (value) => (value === null ? "" : value),
@@ -27,6 +28,10 @@ const optionalDate = z.preprocess(
     .trim()
     .transform((value) => (value ? new Date(`${value}Z`) : null))
     .pipe(z.date().nullable()),
+);
+
+const optionalZipCode = optionalText.pipe(
+  z.string().regex(ZIP_CODE_PATTERN, "Postal code must be exactly 5 digits.").nullable(),
 );
 
 const businessUpdateSchema = z.object({
@@ -55,7 +60,7 @@ const businessUpdateSchema = z.object({
   city: optionalText,
   state: optionalText,
   stateCode: optionalText,
-  postalCode: optionalText,
+  postalCode: optionalZipCode,
   countryCode: optionalText,
   latitude: optionalNumber.pipe(z.number().min(-90).max(90).nullable()),
   longitude: optionalNumber.pipe(z.number().min(-180).max(180).nullable()),
@@ -82,7 +87,7 @@ const businessCreateSchema = z.object({
   city: optionalText,
   state: optionalText,
   stateCode: optionalText,
-  postalCode: optionalText,
+  postalCode: optionalZipCode,
   countryCode: optionalText,
   latitude: optionalNumber.pipe(z.number().min(-90).max(90).nullable()),
   longitude: optionalNumber.pipe(z.number().min(-180).max(180).nullable()),

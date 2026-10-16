@@ -81,9 +81,11 @@ export default async function UserDetailPage({ params }: UserDetailPageProps) {
           </h1>
           <p className="muted">View and edit workspace account details.</p>
         </div>
-        <span className="role-pill">
-          {account.role ? roleLabels[account.role] : "Contributor"}
-        </span>
+        <div className="page-heading-status">
+          <span className="role-pill">
+            {account.role ? roleLabels[account.role] : "Contributor"}
+          </span>
+        </div>
       </div>
 
       <div className="business-detail-grid">
